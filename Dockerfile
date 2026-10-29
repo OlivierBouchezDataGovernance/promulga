@@ -16,10 +16,13 @@ WORKDIR /app
 COPY pyproject.toml README.md LICENSE ./
 COPY promulga ./promulga
 RUN pip install --no-cache-dir ".[postgres]"
+COPY deploy/entrypoint.sh /usr/local/bin/promulga-entrypoint
+RUN sed -i 's/\r$//' /usr/local/bin/promulga-entrypoint && chmod 755 /usr/local/bin/promulga-entrypoint
 
-USER promulga
+# Starts as root only to read the Docker secrets, then runs as "promulga" (see entrypoint.sh).
 VOLUME ["/data"]
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=4)"
+ENTRYPOINT ["promulga-entrypoint"]
 CMD ["promulga", "serve", "--host", "0.0.0.0", "--port", "8000"]
