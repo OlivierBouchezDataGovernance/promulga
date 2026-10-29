@@ -17,7 +17,10 @@ if [ -f .env ]; then
   if grep -Eq '^ADMIN_PASSWORD=.+' .env; then
     bad "ADMIN_PASSWORD is set in .env: remove it once the administrator has changed the password"
   else ok "no administrator password in .env"; fi
-  for var in SMTP_PASSWORD GITHUB_TOKEN OIDC_CLIENT_SECRET ONLYOFFICE_JWT_SECRET SECRET_KEY; do
+  if grep -Eq '^SECRET_KEY=.+' .env; then
+    bad "SECRET_KEY is in .env: remove the line (a random key is generated and kept in the data volume)"
+  fi
+  for var in SMTP_PASSWORD GITHUB_TOKEN OIDC_CLIENT_SECRET ONLYOFFICE_JWT_SECRET SIGNING_CERT_PASSWORD; do
     if grep -Eq "^${var}=.+" .env; then bad "$var is in .env: move it to secrets/$(echo $var | tr 'A-Z' 'a-z')"; fi
   done
   grep -Eq '^SECURE_COOKIES=true' .env && ok "secure cookies" || info "SECURE_COOKIES is not true (fine for a local HTTP test only)"
