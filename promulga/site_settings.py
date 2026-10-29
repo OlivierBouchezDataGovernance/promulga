@@ -29,7 +29,7 @@ DEFAULTS: dict[str, Any] = {
     "banner_asset": "",             # optional background image of the portal banner
     "banner_html": "<h1>Governance documents</h1>\n<p>Find the official, approved version of our policies, "
                    "standards and procedures.</p>",
-    "footer_html": "<p>Published with Promulga - open-source governance document workflow.</p>",
+    "footer_html": "<p>Published with Promulga - governance document workflow.</p>",
     # Portal ---------------------------------------------------------------
     "portal_access": "public",      # public | login
     "portal_show_owner": True,

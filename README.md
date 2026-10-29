@@ -110,11 +110,16 @@ PAdES signatures, OnlyOffice Docs (optional) for online editing.
 
 ### Status, licence and support
 
-Promulga is an **open-source project offered as is**, under the
-[Apache License 2.0](LICENSE). Whoever installs it runs and secures their own
-server. There is **no support, no warranty and no service level** – only
-best-effort answers to issues when time allows. Review it, test it, and get a
-security review before trusting it with sensitive documents.
+Promulga is free under the [Promulga Community License](LICENSE): for any
+non-commercial use, and inside an organisation with **up to 20 editors**
+(owners, reviewers, approvers, managers, administrators); readers of a public
+portal are unlimited. Larger deployments and commercial use (resale, hosting
+for clients, paid products) need a written agreement: sales@promulga.com.
+
+It is offered **as is**: whoever installs it runs and secures their own
+server, and support is best effort only (support@promulga.com). Installation,
+migration and training services are available on request from Olivier Bouchez
+Data Consulting. Website: https://promulga.com.
 
 Known limits of version 0.2: the interface is in English (texts are marked
 for translation), a single application process, the cover page and variables
