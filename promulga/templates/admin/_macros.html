@@ -4,14 +4,14 @@
   {% if doc.stage_due %}<span class="{{ 'late' if doc.is_overdue }}">{{ doc.stage_due | fdate }}{% if doc.is_overdue %} (overdue){% endif %}</span>{% else %}-{% endif %}
 {% endmacro %}
 
-{% macro task_table(docs, empty, pending) %}
+{% macro task_table(docs, empty, pending, site) %}
   {% if docs %}
   <div class="table-wrap"><table>
     <thead><tr><th>Document</th><th>Stage</th><th>Due</th><th>Waiting for</th></tr></thead>
     <tbody>
     {% for d in docs %}
       <tr>
-        <td><a href="/admin/documents/{{ d.id }}"><strong>{{ d.ref }}</strong> {{ d.title }}</a><br><span class="small muted">{{ d.doc_type }} - version {{ d.next_version }}</span></td>
+        <td><a href="/admin/documents/{{ d.id }}"><strong>{{ d.ref }}</strong> {{ d.title }}</a><br><span class="small muted type-cell">{{ type_icon(site, d.doc_type, 14) }} {{ d.doc_type }} - version {{ d.next_version }}</span></td>
         <td>{{ status(d.status) }}</td>
         <td>{{ due(d) }}</td>
         <td class="small">{{ pending(d) | map(attribute='display') | join(', ') or '-' }}</td>

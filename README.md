@@ -1,3 +1,5 @@
+<img src="docs/promulga-logo.svg" alt="Promulga" height="56">
+
 # Promulga
 
 **Self-hosted life cycle of governance documents** – policies, standards,
@@ -39,7 +41,9 @@ Two web sites in one small application:
 - **Audit trail.** Every action, by whom, when, with which comment; exportable
   as CSV. The register is exportable too.
 - **Your look.** Colours, logo, banner image, banner and footer HTML are
-  edited by the administrator (HTML is sanitised: no scripts).
+  edited by the administrator (HTML is sanitised: no scripts). Accessible by
+  default (WCAG AA contrasts, fixed stage colours, icons always labelled),
+  self-hosted Inter font and Lucide icons: no third-party request.
 - **E-mails** to the person who must act, with links; without an SMTP server
   everything is readable in the *Outbox* (handy for demos).
 
@@ -54,7 +58,9 @@ docker compose up -d --build
 ```
 
 - [docs/INSTALL.md](docs/INSTALL.md) – installation on any Linux server, with a step-by-step guide for a **Google Cloud** VM.
+- [docs/INSTALL-WSL.md](docs/INSTALL-WSL.md) – a local test on a Windows laptop with Ubuntu WSL.
 - [docs/QUICKSTART.md](docs/QUICKSTART.md) – first steps after installation, and a 15-minute demo scenario.
+- [docs/BRAND.md](docs/BRAND.md) – visual identity: logo, colours, stage colours, typography, icons.
 
 For development without Docker:
 

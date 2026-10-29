@@ -3,7 +3,7 @@
 <nav class="navbar" aria-label="Workspace">
   <div class="navbar-inner">
     <a class="brand" href="/admin">
-      {% if site.logo_asset %}<img src="/assets/{{ site.logo_asset }}" alt="">{% endif %}
+      <img src="{{ '/assets/' ~ site.logo_asset if site.logo_asset else '/static/promulga-mark.svg' }}" alt="">
       <span>{{ site.site_name }}</span> <span class="badge-env">Workspace</span>
     </a>
     <div class="nav-links">

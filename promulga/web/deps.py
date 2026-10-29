@@ -13,7 +13,7 @@ from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 from sqlalchemy.orm import Session
 
-from .. import __version__, site_settings
+from .. import __version__, icons, site_settings
 from ..config import get_config
 from ..db import get_db
 from ..models import ROLE_ADMIN, ROLE_MANAGER, User
@@ -57,6 +57,9 @@ templates.env.filters["fdate"] = _fmt_date
 templates.env.filters["filesize"] = _filesize
 templates.env.filters["safe_html"] = lambda html: Markup(sanitize_html(html))
 templates.env.globals["app_version"] = __version__
+templates.env.globals["icon"] = icons.svg
+templates.env.globals["type_icon"] = lambda site, doc_type, size=20: icons.svg(
+    site_settings.doc_type_icon(site, doc_type), size)
 
 
 # ---------------------------------------------------------------------------

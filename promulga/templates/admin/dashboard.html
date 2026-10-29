@@ -1,5 +1,5 @@
 {% extends "admin/base.html" %}
-{% from "admin/_macros.html" import task_table %}
+{% from "admin/_macros.html" import task_table with context %}
 {% block title %}My tasks - {{ site.site_name }}{% endblock %}
 {% block content %}
 <div class="page-head"><div class="container">
@@ -11,29 +11,29 @@
   <div class="task-group">
     <h2>To write or revise {% if to_write %}<span class="pill-count">{{ to_write | length }}</span>{% endif %}</h2>
     <p class="small muted">You are the owner: check out the file, edit it, check it in, then submit.</p>
-    {{ task_table(to_write, "Nothing to write.", pending) }}
+    {{ task_table(to_write, "Nothing to write.", pending, site) }}
   </div>
   <div class="task-group" style="margin-top:2rem">
     <h2>To review {% if to_review %}<span class="pill-count">{{ to_review | length }}</span>{% endif %}</h2>
     <p class="small muted">Read the document, add your comments on its page, then click "Review done".</p>
-    {{ task_table(to_review, "Nothing to review.", pending) }}
+    {{ task_table(to_review, "Nothing to review.", pending, site) }}
   </div>
   <div class="task-group" style="margin-top:2rem">
     <h2>To approve {% if to_approve %}<span class="pill-count">{{ to_approve | length }}</span>{% endif %}</h2>
     <p class="small muted">Approve, or reject with a comment explaining what must change.</p>
-    {{ task_table(to_approve, "Nothing to approve.", pending) }}
+    {{ task_table(to_approve, "Nothing to approve.", pending, site) }}
   </div>
   {% if following %}
   <div class="task-group" style="margin-top:2rem">
     <h2>Other documents I take part in</h2>
-    {{ task_table(following, "", pending) }}
+    {{ task_table(following, "", pending, site) }}
   </div>
   {% endif %}
   {% if user.has_role('manager') %}
   <div class="task-group" style="margin-top:2rem">
     <h2>Overdue stages {% if overdue %}<span class="pill-count">{{ overdue | length }}</span>{% endif %}</h2>
     <p class="small muted">{{ active_count }} document(s) in progress in total.</p>
-    {{ task_table(overdue, "No stage is overdue.", pending) }}
+    {{ task_table(overdue, "No stage is overdue.", pending, site) }}
   </div>
   {% endif %}
 </div></section>

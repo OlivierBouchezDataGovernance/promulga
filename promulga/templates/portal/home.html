@@ -30,8 +30,10 @@
     </div>
     {% endif %}
     {% if types %}
-    <p class="small muted" style="margin-top:1rem">By type:
-      {% for t in types %}<a class="tag" href="/search?type={{ t | urlencode }}">{{ t }}</a>{% endfor %}</p>
+    <div class="eyebrow" style="margin-top:2rem">By type</div>
+    <div class="type-tiles">
+      {% for t, n in types %}<a class="type-tile" href="/search?type={{ t | urlencode }}">{{ type_icon(site, t) }} {{ t }}<span class="count">{{ n }}</span></a>{% endfor %}
+    </div>
     {% endif %}
   </div>
 </section>

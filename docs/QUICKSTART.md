@@ -7,7 +7,9 @@ These steps take about 15 minutes.
 
 - **Site name** and **tagline**.
 - **Colours**: primary (headings, banner), primary dark (navigation and
-  footer), accent (buttons), success (approve / published).
+  footer), accent (buttons, links), success (approve / published). The text
+  on buttons switches automatically between white and black to stay readable.
+  Stage colours (Draft, Review...) are fixed, see [BRAND.md](BRAND.md).
 - **Logo** (PNG or SVG, shown in the navigation bar) and an optional
   **banner image** behind the portal's home banner.
 - **Banner HTML** – the text of the portal home page, for example:
@@ -26,7 +28,7 @@ These steps take about 15 minutes.
 - Stage durations (default Draft 28, Review 14, Revision 14, Approval 14 days).
 - "Due soon" reminder N days before the deadline, overdue reminder repeated
   every N days, hour of the reminders, daily summary for managers.
-- Document types and their reference prefix (`Policy=POL` → `POL-0001`).
+- Document types, their reference prefix and icon (`Policy=POL=shield-check` → `POL-0001`).
 - Optionally a Word **template** that becomes the first file of new documents.
 
 ## 3. Decide who reads the portal – *Settings > Public portal*

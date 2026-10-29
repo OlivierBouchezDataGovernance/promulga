@@ -111,6 +111,19 @@ def test_portal_login_mode_and_viewer(client):
     assert client.get("/admin").status_code == 403
 
 
+def test_readable_button_text_and_type_icons(client):
+    from promulga.site_settings import readable_on
+    assert readable_on("#2563eb") == "#ffffff" and readable_on("#d4af5c") == "#0f172a"
+    login(client, "admin@example.org", "admin-password-123")
+    page = client.get("/admin/settings")
+    client.post("/admin/settings/workflow", data={
+        "csrf": csrf_of(page.text), "doc_types": "Policy=POL=shield-check\nNote=NOT=pin\nOdd=ODD=unknown-icon",
+        "draft_days": 28, "review_days": 14, "revision_days": 14, "approval_days": 14})
+    text = client.get("/admin/settings").text
+    assert "Note=NOT=pin" in text and "Odd=ODD=file-text" in text
+    assert "--c-on-accent: #ffffff" in client.get("/theme.css").text
+
+
 def test_banner_html_is_sanitised(client):
     login(client, "admin@example.org", "admin-password-123")
     page = client.get("/admin/settings")

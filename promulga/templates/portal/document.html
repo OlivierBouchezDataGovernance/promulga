@@ -4,14 +4,16 @@
 {% block content %}
 <div class="page-head"><div class="container">
   <div class="crumbs"><a href="/">Home</a> / <a href="/search?type={{ doc.doc_type | urlencode }}">{{ doc.doc_type }}</a></div>
-  <div class="eyebrow">{{ doc.ref }} - {{ doc.doc_type }}</div>
+  <div class="eyebrow">{{ type_icon(site, doc.doc_type, 16) }} {{ doc.ref }} - {{ doc.doc_type }}</div>
   <h1>{{ pub.title if pub else doc.title }}</h1>
 </div></div>
 <section class="section"><div class="container grid-2">
   <div>
     {% if retired %}
-      <div class="notice">This document has been withdrawn and is no longer in force.</div>
+      <div class="seal withdrawn">{{ icon("file-text", 30) }}<div><strong>Withdrawn</strong><span>This document is no longer in force.</span></div></div>
     {% else %}
+      <div class="seal">{{ icon("shield-check", 30) }}<div><strong>Official version {{ pub.version }}</strong>
+        <span>In force since {{ pub.published_at | fdate }}{% if pub.approved_by %} - approved by {{ pub.approved_by }}{% endif %}</span></div></div>
       {% if doc.summary %}<p>{{ doc.summary }}</p>{% endif %}
       <div class="actions">
         <a class="btn" href="/d/{{ doc.ref }}/v{{ pub.version }}.pdf" target="_blank" rel="noopener">Read version {{ pub.version }} (PDF)</a>

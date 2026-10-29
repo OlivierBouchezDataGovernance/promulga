@@ -97,7 +97,11 @@ def home(request: Request, db: Session = Depends(get_db), user: User | None = De
         roots = children.get(None, [])
         counts = _count_by_term(docs, children, [t.id for t in roots])
         cards.append({"taxonomy": tax, "roots": roots, "counts": counts})
-    types = sorted({d.doc_type for d in docs})
+    order = [t["name"] for t in site_settings.get(db, "doc_types")]
+    counts: dict[str, int] = {}
+    for d in docs:
+        counts[d.doc_type] = counts.get(d.doc_type, 0) + 1
+    types = sorted(counts.items(), key=lambda kv: (order.index(kv[0]) if kv[0] in order else 99, kv[0]))
     return render(request, db, "portal/home.html", user=user, cards=cards, latest=latest,
                   total=len(docs), types=types)
 
@@ -188,10 +192,10 @@ def document_pdf(ref: str, version: str, download: bool = False, db: Session = D
 def theme_css(db: Session = Depends(get_db)):
     site = site_settings.get_all(db)
     css = ":root {\n" + "".join(
-        f"  --{key.replace('color_', 'c-').replace('_', '-')}: {site[key]};\n" for key in site_settings.COLOR_KEYS
+        f"  --{key.replace('color_', 'c-').replace('_', '-')}: {site[key]};\n" for key in site_settings.THEME_KEYS
     ) + "}\n"
     if site.get("banner_asset"):
-        css += f".banner {{ background-image: linear-gradient(160deg, rgba(13,27,51,.82), rgba(13,27,51,.92)), " \
+        css += f".banner {{ background-image: linear-gradient(160deg, rgba(15,23,42,.80), rgba(15,23,42,.92)), " \
                f"url('/assets/{site['banner_asset']}'); background-size: cover; background-position: center; }}\n"
     return Response(css, media_type="text/css", headers={"Cache-Control": "no-cache"})
 

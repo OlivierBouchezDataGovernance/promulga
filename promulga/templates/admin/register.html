@@ -1,5 +1,5 @@
 {% extends "admin/base.html" %}
-{% from "admin/_macros.html" import status, due %}
+{% from "admin/_macros.html" import status, due with context %}
 {% block title %}Register - {{ site.site_name }}{% endblock %}
 {% block content %}
 <div class="page-head"><div class="container">
@@ -23,7 +23,7 @@
       <tr>
         <td><a href="/admin/documents/{{ d.id }}"><strong>{{ d.ref }}</strong></a></td>
         <td><a href="/admin/documents/{{ d.id }}">{{ d.title }}</a><br>{% for t in d.terms %}<span class="tag">{{ t.name }}</span>{% endfor %}</td>
-        <td>{{ d.doc_type }}</td>
+        <td><span class="type-cell">{{ type_icon(site, d.doc_type, 16) }} {{ d.doc_type }}</span></td>
         <td class="small">{{ d.owner.display }}</td>
         <td>{{ status(d.status) }}</td>
         <td class="small">{{ due(d) }}</td>

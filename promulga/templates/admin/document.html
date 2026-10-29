@@ -1,16 +1,16 @@
 {% extends "admin/base.html" %}
-{% from "admin/_macros.html" import status, due %}
+{% from "admin/_macros.html" import status, due with context %}
 {% block title %}{{ doc.ref }} - {{ site.site_name }}{% endblock %}
 {% block content %}
 {% set steps = ["Draft", "Review", "Revision", "Approval", "Published"] %}
 {% set idx = steps.index(doc.status) if doc.status in steps else 4 %}
 <div class="page-head"><div class="container">
   <div class="crumbs"><a href="/admin/documents">Register</a> / {{ doc.ref }}</div>
-  <div class="eyebrow">{{ doc.ref }} - {{ doc.doc_type }}</div>
+  <div class="eyebrow">{{ type_icon(site, doc.doc_type, 16) }} {{ doc.ref }} - {{ doc.doc_type }}</div>
   <h1>{{ doc.title }} {{ status(doc.status) }}</h1>
   <div class="stepper" aria-label="Workflow stage">
     {% for s in steps %}
-      <div class="step {{ 'current' if loop.index0 == idx and doc.status != 'Retired' else ('done' if loop.index0 < idx) }}">{{ s }}</div>
+      <div class="step stage-{{ s }} {{ 'current' if loop.index0 == idx and doc.status not in ['Published', 'Retired'] else ('done' if loop.index0 < idx or doc.status in ['Published', 'Retired']) }}">{{ s }}</div>
     {% endfor %}
   </div>
   <p class="muted small">
@@ -25,7 +25,7 @@
 
   {# ------------------------------------------------ What do I have to do? #}
   {% if has_task %}
-  <div class="card" style="border-left:4px solid var(--c-accent)">
+  <div class="card task-card stage-{{ doc.status }}">
     <h2>Your action</h2>
 
     {% if 'checkin' in actions %}

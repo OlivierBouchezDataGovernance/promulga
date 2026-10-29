@@ -6,7 +6,7 @@
   <title>{% block title %}{{ site.site_name }}{% endblock %}</title>
   <link rel="stylesheet" href="/static/promulga.css?v={{ app_version }}">
   <link rel="stylesheet" href="/theme.css">
-  <link rel="icon" href="{{ '/assets/' ~ site.logo_asset if site.logo_asset else '/static/favicon.svg' }}">
+  <link rel="icon" href="{{ '/assets/' ~ site.logo_asset if site.logo_asset else '/static/promulga-mark.svg' }}">
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>
@@ -23,7 +23,7 @@
   <footer class="footer">
     <div class="footer-inner">
       {{ site.footer_html | safe_html }}
-      <div class="footer-meta">Promulga {{ app_version }} - open-source governance document workflow, provided as is, without warranty.</div>
+      <div class="footer-meta"><img src="/static/promulga-mark.svg" alt=""> Promulga {{ app_version }} - open-source governance document workflow, provided as is, without warranty.</div>
     </div>
   </footer>
   {% block scripts %}{% endblock %}

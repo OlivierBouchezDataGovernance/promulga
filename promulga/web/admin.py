@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from sqlalchemy import or_
 from sqlalchemy.orm import Session, selectinload
 
-from .. import accounts, mailer, reminders, site_settings, storage, workflow
+from .. import accounts, icons, mailer, reminders, site_settings, storage, workflow
 from ..config import get_config
 from ..db import get_db
 from ..models import (
@@ -493,7 +493,7 @@ def update_term(term_id: int, request: Request, name: str = Form(""), parent_id:
 
 @router.get("/settings")
 def settings_page(request: Request, db: Session = Depends(get_db), user: User = Depends(require_admin)):
-    return render(request, db, "admin/settings.html", user=user, cfg=get_config())
+    return render(request, db, "admin/settings.html", user=user, cfg=get_config(), icon_names=sorted(icons.ICONS))
 
 
 @router.post("/settings/look", dependencies=[Depends(csrf_protect)])
@@ -534,12 +534,12 @@ async def save_workflow(request: Request, draft_days: int = Form(28), review_day
                         db: Session = Depends(get_db), user: User = Depends(require_admin)):
     types = []
     for line in doc_types.splitlines():
-        if "=" in line:
-            name, prefix = (p.strip() for p in line.split("=", 1))
-            if name and re.fullmatch(r"[A-Z0-9]{2,8}", prefix.upper()):
-                types.append({"name": name[:50], "prefix": prefix.upper()})
+        parts = [p.strip() for p in line.split("=")]
+        if len(parts) >= 2 and parts[0] and re.fullmatch(r"[A-Z0-9]{2,8}", parts[1].upper()):
+            icon = parts[2] if len(parts) > 2 and parts[2] in icons.ICONS else icons.DEFAULT_ICON
+            types.append({"name": parts[0][:50], "prefix": parts[1].upper(), "icon": icon})
     if not types:
-        flash(request, "Give at least one document type, one per line, as 'Name=PREFIX'.", "error")
+        flash(request, "Give at least one document type, one per line, as 'Name=PREFIX=icon'.", "error")
         return redirect("/admin/settings#workflow")
     days = [draft_days, review_days, revision_days, approval_days]
     if any(d < 1 or d > 365 for d in days):
