@@ -1,0 +1,368 @@
+<script>
+/**
+ * Client side of the web app. Draws the tabs from apiDashboard() and calls
+ * the api* server functions. All text coming from the register is inserted
+ * with textContent (never innerHTML), so a title cannot inject HTML.
+ */
+(function () {
+  'use strict';
+
+  let state = null;            // last apiDashboard() result
+  let currentTab = BOOT.tab;   // tab shown
+  let detailsId = null;        // document shown in the register details panel
+
+  const $ = function (id) { return document.getElementById(id); };
+
+  /**
+   * Tiny DOM builder: el('a', {href: url, text: 'x'}, child1, child2).
+   * Attributes: text, class, on<event> (function), anything else = attribute.
+   */
+  function el(tag, attrs) {
+    const node = document.createElement(tag);
+    Object.keys(attrs || {}).forEach(function (k) {
+      const v = attrs[k];
+      if (v === undefined || v === null || v === false) return;
+      if (k === 'text') node.textContent = v;
+      else if (k === 'class') node.className = v;
+      else if (k.indexOf('on') === 0) node.addEventListener(k.slice(2), v);
+      else node.setAttribute(k, v);
+    });
+    for (let i = 2; i < arguments.length; i++) {
+      const c = arguments[i];
+      if (c === null || c === undefined || c === false) continue;
+      node.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+    }
+    return node;
+  }
+
+  /** Calls a server function and returns a Promise. */
+  function call(fn) {
+    const args = Array.prototype.slice.call(arguments, 1);
+    return new Promise(function (resolve, reject) {
+      google.script.run.withSuccessHandler(resolve).withFailureHandler(reject)[fn].apply(null, args);
+    });
+  }
+
+  function showStatus(text, isError) {
+    const s = $('status');
+    s.textContent = text;
+    s.className = 'status' + (isError ? ' error' : '');
+    if (!isError) setTimeout(function () { if (s.textContent === text) s.className = 'status hidden'; }, 6000);
+  }
+
+  /** Runs a server call with every button disabled, then redraws. */
+  function run(promise, okMessage) {
+    document.querySelectorAll('button').forEach(function (b) { b.disabled = true; });
+    showStatus('Working... (this can take a few seconds)');
+    return promise.then(function (result) {
+      if (result && result.docs) { state = result; render(); }
+      showStatus(okMessage || 'Done.');
+      return result;
+    }).catch(function (err) {
+      showStatus(err && err.message ? err.message : String(err), true);
+    }).finally(function () {
+      document.querySelectorAll('button').forEach(function (b) { b.disabled = false; });
+    });
+  }
+
+  function action(name, docId, payload, okMessage) {
+    return run(call('apiAction', BOOT.auth, name, docId, payload || {}), okMessage);
+  }
+
+  // -------------------------------------------------------------------------
+  // Tabs
+  // -------------------------------------------------------------------------
+
+  function selectTab(tab) {
+    currentTab = tab;
+    document.querySelectorAll('#tabs button').forEach(function (b) {
+      b.classList.toggle('active', b.dataset.tab === tab);
+    });
+    document.querySelectorAll('.panel').forEach(function (p) {
+      p.classList.toggle('active', p.dataset.panel === tab);
+    });
+  }
+
+  function render() {
+    $('org').textContent = state.org || '';
+    $('me').textContent = 'Signed in as ' + state.me + (state.isManager ? ' (Document Manager)' : '');
+    document.querySelectorAll('.manager-only').forEach(function (n) { n.classList.toggle('hidden', !state.isManager); });
+
+    const drafts = state.docs.filter(function (d) { return d.isOwner && (d.status === 'Draft' || d.status === 'Revision'); });
+    const reviews = state.docs.filter(function (d) { return d.isReviewer && d.status === 'Review'; });
+    const approvals = state.docs.filter(function (d) { return d.isApprover && d.status === 'Approval'; });
+
+    fillList('drafts', drafts, draftCard, 'You have no document to write or revise.');
+    fillList('reviews', reviews, reviewCard, 'You have no document to review.');
+    fillList('approvals', approvals, approvalCard, 'You have no document to approve.');
+    renderRegister();
+
+    const typeSelect = $('typeSelect');
+    if (!typeSelect.options.length) {
+      state.types.forEach(function (t) { typeSelect.appendChild(el('option', { value: t, text: t })); });
+    }
+    selectTab(currentTab === 'new' && !state.isManager ? 'drafts' : currentTab);
+  }
+
+  function fillList(tab, docs, cardFn, emptyText) {
+    const box = $('list-' + tab);
+    box.replaceChildren();
+    const mine = docs.filter(function (d) { return d.myTurn; }).length;
+    $('n-' + tab).textContent = mine ? String(mine) : '';
+    if (!docs.length) { box.appendChild(el('p', { class: 'muted', text: emptyText })); return; }
+    docs.forEach(function (d) { box.appendChild(cardFn(d)); });
+  }
+
+  // -------------------------------------------------------------------------
+  // Cards
+  // -------------------------------------------------------------------------
+
+  function cardHead(d) {
+    return [
+      el('h2', {}, d.id + ' - ' + d.title + ' ', el('span', { class: 'pill ' + d.status, text: d.status })),
+      el('div', { class: 'meta' },
+        d.type + ' - preparing version ' + d.nextVersion +
+        (d.version ? ' (published: ' + d.version + ')' : '') + ' - due ',
+        el('span', { class: d.overdue ? 'late' : '', text: d.due + (d.overdue ? ' (overdue)' : '') })),
+    ];
+  }
+
+  function openDocButton(d, label) {
+    return el('a', { class: 'button secondary', href: d.url, target: '_blank', rel: 'noopener', text: label || 'Open the Google Doc' });
+  }
+
+  /**
+   * "alice ✓, bob (waiting)" for a list of people and those who acted.
+   * With done = null the list is shown without status.
+   */
+  function peopleLine(label, people, done) {
+    if (!people.length) return null;
+    const line = el('div', { class: 'people' }, el('b', { text: label + ': ' }));
+    people.forEach(function (p, i) {
+      if (i) line.appendChild(document.createTextNode(', '));
+      if (!done) { line.appendChild(document.createTextNode(p)); return; }
+      const ok = done.indexOf(p) >= 0;
+      line.appendChild(el('span', { class: ok ? 'done' : '', text: p + (ok ? ' ✓' : ' (waiting)') }));
+    });
+    return line;
+  }
+
+  function draftCard(d) {
+    const toApproval = d.status === 'Revision' || !d.reviewers.length;
+    const label = toApproval ? 'Submit for approval' : 'Submit for review';
+    const hint = d.status === 'Draft'
+      ? 'Write the draft in the Google Doc. When it is complete, submit it.'
+      : 'Process the reviewers\' comments in the Google Doc (reply, resolve, correct). Then submit it for approval.';
+    return el('div', { class: 'card' },
+      ...cardHead(d),
+      el('p', { text: hint }),
+      d.status === 'Draft' ? peopleLine('Reviewers', d.reviewers, null) : peopleLine('Approvers', d.approvers, null),
+      el('div', { class: 'actions' },
+        openDocButton(d),
+        el('button', {
+          text: label,
+          onclick: function () {
+            if (confirm(label + ' ' + d.id + '? You will no longer be able to edit the text until it comes back to you.')) {
+              action('submit', d.id, {}, d.id + ': ' + label.toLowerCase() + ' - e-mails sent.');
+            }
+          },
+        })));
+  }
+
+  function reviewCard(d) {
+    const done = d.reviewedBy.indexOf(state.me) >= 0;
+    const comment = el('textarea', { rows: 2, placeholder: 'Optional summary for the owner (detailed remarks go in the Doc comments)' });
+    return el('div', { class: 'card' },
+      ...cardHead(d),
+      el('div', { class: 'people', text: 'Owner: ' + d.owner }),
+      peopleLine('Reviewers', d.reviewers, d.reviewedBy),
+      done ? el('p', { class: 'done', text: 'You marked your review as done. Thank you!' }) : comment,
+      el('div', { class: 'actions' },
+        openDocButton(d, 'Open the Google Doc to comment'),
+        done ? null : el('button', {
+          text: 'Review done',
+          onclick: function () {
+            if (confirm('Mark your review of ' + d.id + ' as done?')) {
+              action('reviewDone', d.id, { comment: comment.value }, 'Review recorded.');
+            }
+          },
+        })));
+  }
+
+  function approvalCard(d) {
+    const done = d.approvedBy.indexOf(state.me) >= 0;
+    const comment = el('textarea', { rows: 2, placeholder: 'Comment (required to reject)' });
+    return el('div', { class: 'card' },
+      ...cardHead(d),
+      el('div', { class: 'people', text: 'Owner: ' + d.owner }),
+      peopleLine('Approvers', d.approvers, d.approvedBy),
+      done ? el('p', { class: 'done', text: 'You approved this version. Waiting for the other approvers.' }) : comment,
+      el('div', { class: 'actions' },
+        openDocButton(d),
+        done ? null : el('button', {
+          text: 'Approve',
+          onclick: function () {
+            if (confirm('Approve ' + d.id + ' version ' + d.nextVersion + '?')) {
+              action('approve', d.id, { comment: comment.value }, 'Approval recorded.');
+            }
+          },
+        }),
+        done ? null : el('button', {
+          class: 'danger', text: 'Reject',
+          onclick: function () {
+            if (!comment.value.trim()) { showStatus('Please write a comment explaining the rejection.', true); comment.focus(); return; }
+            if (confirm('Reject ' + d.id + '? It goes back to the owner for revision.')) {
+              action('reject', d.id, { comment: comment.value }, d.id + ' sent back to the owner.');
+            }
+          },
+        })));
+  }
+
+  // -------------------------------------------------------------------------
+  // Register
+  // -------------------------------------------------------------------------
+
+  function renderRegister() {
+    const q = $('filter').value.trim().toLowerCase();
+    const body = $('register');
+    body.replaceChildren();
+    state.docs
+      .filter(function (d) {
+        if (!q) return true;
+        return [d.id, d.title, d.type, d.status, d.owner, d.reviewers.join(' '), d.approvers.join(' ')]
+          .join(' ').toLowerCase().indexOf(q) >= 0;
+      })
+      .forEach(function (d) {
+        body.appendChild(el('tr', {},
+          el('td', { text: d.id }),
+          el('td', {}, el('a', { href: d.url, target: '_blank', rel: 'noopener', text: d.title })),
+          el('td', { text: d.type }),
+          el('td', { text: d.owner }),
+          el('td', {}, el('span', { class: 'pill ' + d.status, text: d.status })),
+          el('td', { class: d.overdue ? 'late' : '', text: d.due }),
+          el('td', { text: d.version || '-' }),
+          el('td', {}, d.pdfUrl ? el('a', { href: d.pdfUrl, target: '_blank', rel: 'noopener', text: d.published + ' (PDF)' }) : '-'),
+          el('td', {}, el('button', { class: 'secondary', text: 'Details', onclick: function () { showDetails(d.id); } }))));
+      });
+    if (detailsId) showDetails(detailsId, true);
+  }
+
+  function showDetails(id, quiet) {
+    detailsId = id;
+    const d = state.docs.find(function (x) { return x.id === id; });
+    const box = $('details');
+    box.replaceChildren();
+    if (!d) return;
+    const card = el('div', { class: 'card' },
+      el('h2', {}, d.id + ' - ' + d.title + ' ', el('span', { class: 'pill ' + d.status, text: d.status })),
+      el('div', { class: 'people', text: 'Owner: ' + d.owner }),
+      peopleLine('Reviewers', d.reviewers, d.status === 'Review' ? d.reviewedBy : null),
+      peopleLine('Approvers', d.approvers, d.status === 'Approval' ? d.approvedBy : null),
+      d.pending.length ? el('div', { class: 'people', text: 'Waiting for: ' + d.pending.join(', ') }) : null);
+    if (state.isManager) card.appendChild(managerActions(d));
+    const historyBox = el('div', { class: 'history', text: 'Loading history...' });
+    card.appendChild(el('h2', { text: 'History' }));
+    card.appendChild(historyBox);
+    box.appendChild(card);
+    if (!quiet) card.scrollIntoView({ behavior: 'smooth' });
+
+    call('apiHistory', BOOT.auth, id).then(function (rows) {
+      historyBox.replaceChildren(el('table', {},
+        el('tbody', {}, ...rows.map(function (h) {
+          return el('tr', {},
+            el('td', { text: h.when }), el('td', { text: 'v' + h.version }),
+            el('td', { text: (h.from ? h.from + ' → ' : '') + h.to }),
+            el('td', { text: h.action }), el('td', { text: h.actor }), el('td', { text: h.comment }));
+        }))));
+    }).catch(function (err) { historyBox.textContent = err.message; });
+  }
+
+  function managerActions(d) {
+    const box = el('div', { class: 'actions' });
+    if (d.status === 'Review') {
+      box.appendChild(el('button', {
+        class: 'secondary', text: 'Close review now',
+        onclick: function () {
+          if (confirm('Close the review of ' + d.id + ' without waiting for ' + d.pending.join(', ') + '?')) {
+            action('closeReview', d.id, {}, 'Review closed; the owner can revise.');
+          }
+        },
+      }));
+    }
+    if (d.status === 'Published') {
+      ['minor', 'major'].forEach(function (bump) {
+        box.appendChild(el('button', {
+          class: 'secondary', text: 'Start new ' + bump + ' revision',
+          onclick: function () {
+            if (confirm('Start a new ' + bump + ' revision of ' + d.id + '? The Google Doc is unlocked for the owner; the published PDF stays as it is.')) {
+              action('newRevision', d.id, { bump: bump }, 'New revision started; the owner was notified.');
+            }
+          },
+        }));
+      });
+    } else {
+      const owner = el('input', { value: d.owner });
+      const reviewers = el('textarea', { rows: 2 }); reviewers.value = d.reviewers.join(', ');
+      const approvers = el('textarea', { rows: 2 }); approvers.value = d.approvers.join(', ');
+      const form = el('details', {},
+        el('summary', { text: 'Change participants' }),
+        el('label', {}, 'Owner', owner),
+        el('label', {}, 'Reviewers', reviewers),
+        el('label', {}, 'Approvers', approvers),
+        el('button', {
+          text: 'Save participants',
+          onclick: function () {
+            action('participants', d.id, { owner: owner.value, reviewers: reviewers.value, approvers: approvers.value },
+              'Participants updated and sharing re-applied.');
+          },
+        }));
+      box.appendChild(form);
+    }
+    return box;
+  }
+
+  // -------------------------------------------------------------------------
+  // Start-up
+  // -------------------------------------------------------------------------
+
+  document.querySelectorAll('#tabs button').forEach(function (b) {
+    b.addEventListener('click', function () { selectTab(b.dataset.tab); });
+  });
+  $('filter').addEventListener('input', renderRegister);
+
+  $('newForm').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    const f = ev.target;
+    // f.elements[...] rather than f.title: "title" is also a built-in form property.
+    const value = function (name) { return f.elements[name].value; };
+    const form = { title: value('title'), type: value('type'), owner: value('owner'), reviewers: value('reviewers'), approvers: value('approvers') };
+    run(call('apiCreate', BOOT.auth, form)).then(function (result) {
+      if (result && result.created) {
+        showStatus(result.created + ' created; the owner received an e-mail.');
+        f.reset();
+        selectTab('register');
+        showDetails(result.created);
+      }
+    });
+  });
+
+  $('linkForm').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    $('linkMsg').textContent = 'Sending...';
+    call('apiRequestLink', $('linkEmail').value)
+      .then(function (msg) { $('linkMsg').textContent = msg; })
+      .catch(function (err) { $('linkMsg').textContent = err.message; });
+  });
+
+  $('org').textContent = BOOT.org || '';
+  if (!BOOT.me) {
+    $('login').classList.remove('hidden');
+  } else {
+    $('app').classList.remove('hidden');
+    $('me').textContent = 'Loading...';
+    call('apiDashboard', BOOT.auth)
+      .then(function (result) { state = result; render(); })
+      .catch(function (err) { $('app').classList.remove('hidden'); showStatus(err.message, true); });
+  }
+})();
+</script>

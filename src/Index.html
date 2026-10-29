@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <meta charset="utf-8">
+    <?!= include('Styles'); ?>
+  </head>
+  <body>
+    <header>
+      <div>
+        <div class="org" id="org"></div>
+        <h1>Governance documents</h1>
+      </div>
+      <div class="me" id="me"></div>
+    </header>
+
+    <!-- Shown when the visitor is not identified (no or invalid personal link). -->
+    <section id="login" class="card hidden">
+      <h2>Welcome</h2>
+      <p>This page is opened with your <b>personal link</b>, which you find in every e-mail of the
+        document workflow. If you do not have it, enter your e-mail address and we will send it to you.</p>
+      <form id="linkForm">
+        <input type="email" id="linkEmail" placeholder="you@example.com" required>
+        <button type="submit">Send me my link</button>
+      </form>
+      <p id="linkMsg" class="muted"></p>
+    </section>
+
+    <main id="app" class="hidden">
+      <nav id="tabs">
+        <button data-tab="drafts">My drafts <span class="badge" id="n-drafts"></span></button>
+        <button data-tab="reviews">My reviews <span class="badge" id="n-reviews"></span></button>
+        <button data-tab="approvals">My approvals <span class="badge" id="n-approvals"></span></button>
+        <button data-tab="register">Register</button>
+        <button data-tab="new" class="manager-only hidden">+ New document</button>
+      </nav>
+
+      <div id="status" class="status hidden"></div>
+
+      <section data-panel="drafts" class="panel">
+        <p class="help">Documents you own. Write in the Google Doc, then submit when it is ready.</p>
+        <div id="list-drafts"></div>
+      </section>
+
+      <section data-panel="reviews" class="panel">
+        <p class="help">Documents to review. Add your remarks as comments in the Google Doc, then click "Review done".</p>
+        <div id="list-reviews"></div>
+      </section>
+
+      <section data-panel="approvals" class="panel">
+        <p class="help">Documents waiting for your decision. Read the Google Doc, then approve, or reject with a comment.</p>
+        <div id="list-approvals"></div>
+      </section>
+
+      <section data-panel="register" class="panel">
+        <input type="search" id="filter" placeholder="Filter by ID, title, type, status or person">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>ID</th><th>Title</th><th>Type</th><th>Owner</th><th>Status</th><th>Due</th>
+                <th>Version</th><th>Published</th><th></th></tr>
+            </thead>
+            <tbody id="register"></tbody>
+          </table>
+        </div>
+        <div id="details"></div>
+      </section>
+
+      <section data-panel="new" class="panel">
+        <form id="newForm" class="card">
+          <h2>New governance document</h2>
+          <label>Title <input name="title" required maxlength="200"></label>
+          <label>Type <select name="type" id="typeSelect"></select></label>
+          <label>Owner (one e-mail) <input name="owner" type="email" required></label>
+          <label>Reviewers (e-mails, comma-separated; may be empty)
+            <textarea name="reviewers" rows="2"></textarea></label>
+          <label>Approvers (e-mails, comma-separated; at least one)
+            <textarea name="approvers" rows="2" required></textarea></label>
+          <p class="muted">The document is copied from the template, shared with the owner as editor, and the owner
+            receives an e-mail. Draft deadline: 4 weeks.</p>
+          <button type="submit">Create document</button>
+        </form>
+      </section>
+    </main>
+
+    <script>
+      // Server-side boot data (identity already verified on the server).
+      const BOOT = <?!= bootJson ?>;
+    </script>
+    <?!= include('Script'); ?>
+  </body>
+</html>
