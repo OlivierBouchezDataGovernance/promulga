@@ -1,0 +1,45 @@
+{% extends "admin/base.html" %}
+{% block title %}Users - {{ site.site_name }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="container">
+  <h1>Users</h1>
+  <p class="muted small"><strong>viewer</strong>: reads the portal when it requires a login.
+    <strong>contributor</strong>: can be owner, reviewer or approver.
+    <strong>manager</strong>: Document Manager, creates documents and steers the workflow.
+    <strong>admin</strong>: manager + users, tags and settings.</p>
+</div></div>
+<section class="section"><div class="container">
+  <div class="card">
+    <h2>Invite someone</h2>
+    <form method="post" action="/admin/users/new" class="row" style="align-items:end">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <div><label for="email">E-mail</label><input id="email" type="email" name="email" required></div>
+      <div><label for="name">Name</label><input id="name" type="text" name="name"></div>
+      <div><label for="role">Role</label><select id="role" name="role">
+        {% for r in roles %}<option {{ 'selected' if r == 'contributor' }}>{{ r }}</option>{% endfor %}</select></div>
+      <div><button class="btn" type="submit">Send invitation</button></div>
+    </form>
+    {% if not smtp_enabled %}<p class="notice small">SMTP is not configured: invitations stay in the <a href="/admin/outbox">Outbox</a>, where you can copy the link.</p>{% endif %}
+  </div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>E-mail</th><th>Name</th><th>Role</th><th>Active</th><th>Password</th><th>Last sign-in</th><th></th></tr></thead>
+    <tbody>
+    {% for u in users %}
+      {% set f = 'user-' ~ u.id %}
+      <tr>
+        <td>{{ u.email }}</td>
+        <td><input form="{{ f }}" type="text" name="name" value="{{ u.name }}" aria-label="Name"></td>
+        <td><select form="{{ f }}" name="role" aria-label="Role">{% for r in roles %}<option {{ 'selected' if r == u.role }}>{{ r }}</option>{% endfor %}</select></td>
+        <td><label class="check"><input form="{{ f }}" type="checkbox" name="active" value="1" {{ 'checked' if u.active }}> active</label></td>
+        <td class="small">{{ 'set' if u.password_hash else ('SSO' if u.oidc_subject else 'not yet') }}</td>
+        <td class="small">{{ u.last_login_at | fdate or '-' }}</td>
+        <td>
+          <form id="{{ f }}" class="inline-form" method="post" action="/admin/users/{{ u.id }}"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-sm btn-outline" type="submit">Save</button></form>
+          {% if not u.password_hash %}<form class="inline-form" method="post" action="/admin/users/{{ u.id }}/invite"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-sm btn-outline" type="submit">Re-invite</button></form>{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</div></section>
+{% endblock %}

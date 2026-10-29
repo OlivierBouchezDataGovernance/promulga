@@ -1,0 +1,9 @@
+{% extends "portal/base.html" %}
+{% block title %}Error {{ status }} - {{ site.site_name }}{% endblock %}
+{% block content %}
+<section class="section"><div class="container">
+  <div class="eyebrow">Error {{ status }}</div>
+  <h1>{{ message }}</h1>
+  <p><a class="btn btn-outline" href="/">Back to the home page</a></p>
+</div></section>
+{% endblock %}

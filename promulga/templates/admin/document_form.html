@@ -1,0 +1,50 @@
+{% extends "admin/base.html" %}
+{% from "admin/_macros.html" import term_checkboxes %}
+{% block title %}{{ 'Edit ' ~ doc.ref if doc else 'New document' }} - {{ site.site_name }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="container">
+  {% if doc %}<div class="crumbs"><a href="/admin/documents">Register</a> / <a href="/admin/documents/{{ doc.id }}">{{ doc.ref }}</a> / edit</div>{% endif %}
+  <h1>{{ 'Edit ' ~ doc.ref if doc else 'New governance document' }}</h1>
+  {% if not doc %}<p class="muted">The owner receives an e-mail and has {{ site.stage_days.Draft }} days to write the draft. People without an account are invited automatically.</p>{% endif %}
+</div></div>
+<section class="section"><div class="container">
+<form method="post" action="{{ '/admin/documents/' ~ doc.id ~ '/edit' if doc else '/admin/documents/new' }}" enctype="multipart/form-data" class="grid-2">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="card">
+    <label for="title">Title</label>
+    <input id="title" type="text" name="title" value="{{ form.title or '' }}" required maxlength="300">
+    {% if not doc %}
+    <label for="doc_type">Type</label>
+    <select id="doc_type" name="doc_type">
+      {% for t in site.doc_types %}<option value="{{ t.name }}" {{ 'selected' if form.doc_type == t.name }}>{{ t.name }} ({{ t.prefix }})</option>{% endfor %}
+    </select>
+    {% endif %}
+    <label for="summary">Summary <span class="hint">(shown on the portal)</span></label>
+    <textarea id="summary" name="summary" rows="3" maxlength="2000">{{ form.summary or '' }}</textarea>
+
+    <label for="owner">Owner <span class="hint">(one e-mail address)</span></label>
+    <input id="owner" type="email" name="owner" value="{{ form.owner or '' }}" list="people" required>
+    <label for="reviewers">Reviewers <span class="hint">(e-mails separated by commas; may be empty)</span></label>
+    <textarea id="reviewers" name="reviewers" rows="2">{{ form.reviewers or '' }}</textarea>
+    <label for="approvers">Approvers <span class="hint">(at least one)</span></label>
+    <textarea id="approvers" name="approvers" rows="2" required>{{ form.approvers or '' }}</textarea>
+    <datalist id="people">{% for u in users %}<option value="{{ u.email }}">{{ u.display }}</option>{% endfor %}</datalist>
+    {% if users %}<p class="hint">Known people: {% for u in users %}{{ u.email }}{{ ', ' if not loop.last }}{% endfor %}</p>{% endif %}
+
+    {% if not doc %}
+    <label for="file">Initial file <span class="hint">(optional{% if site.template_asset %}; otherwise the template is used{% endif %})</span></label>
+    <input id="file" type="file" name="file">
+    {% endif %}
+    <div class="actions">
+      <button class="btn" type="submit">{{ 'Save' if doc else 'Create document' }}</button>
+      <a class="btn btn-outline" href="{{ '/admin/documents/' ~ doc.id if doc else '/admin' }}">Cancel</a>
+    </div>
+  </div>
+  <div>
+    <h3>Tags</h3>
+    <p class="small muted">They drive the navigation of the portal.</p>
+    {{ term_checkboxes(taxonomies, selected_terms) }}
+  </div>
+</form>
+</div></section>
+{% endblock %}

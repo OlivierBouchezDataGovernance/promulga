@@ -1,0 +1,47 @@
+# Promulga: application + PDF conversion (Gotenberg) + HTTPS reverse proxy (Caddy).
+#
+#   cp .env.example .env   # then edit it
+#   docker compose up -d --build
+#
+# Data (database, files, images) lives in the "promulga-data" volume.
+
+services:
+  app:
+    build: .
+    image: promulga:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PROMULGA_DATA_DIR: /data
+      GOTENBERG_URL: http://gotenberg:3000
+    volumes:
+      - promulga-data:/data
+    depends_on:
+      - gotenberg
+
+  gotenberg:
+    # Converts Word/LibreOffice files to PDF at publication. Not exposed outside.
+    image: gotenberg/gotenberg:8
+    restart: unless-stopped
+    command: ["gotenberg", "--chromium-disable-javascript=true", "--api-timeout=120s"]
+
+  caddy:
+    # Automatic HTTPS (Let's Encrypt) for SITE_DOMAIN. Use SITE_DOMAIN=:80 for plain HTTP tests.
+    image: caddy:2.8
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SITE_DOMAIN: ${SITE_DOMAIN:-:80}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - app
+
+volumes:
+  promulga-data:
+  caddy-data:
+  caddy-config:

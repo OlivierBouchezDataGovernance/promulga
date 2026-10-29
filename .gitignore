@@ -1,3 +1,17 @@
-.clasp.json
+# Google Apps Script prototype
+google-apps-script/.clasp.json
 .clasprc.json
+google-apps-script/paste-into-apps-script/
 node_modules/
+
+# Promulga
+.env
+data/
+*.sqlite3
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+*.egg-info/
+build/
+dist/

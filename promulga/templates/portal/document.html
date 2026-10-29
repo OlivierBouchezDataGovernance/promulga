@@ -1,0 +1,40 @@
+{% extends "portal/base.html" %}
+{% set pub = doc.latest_publication %}
+{% block title %}{{ doc.ref }} {{ pub.title if pub else doc.title }} - {{ site.site_name }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="container">
+  <div class="crumbs"><a href="/">Home</a> / <a href="/search?type={{ doc.doc_type | urlencode }}">{{ doc.doc_type }}</a></div>
+  <div class="eyebrow">{{ doc.ref }} - {{ doc.doc_type }}</div>
+  <h1>{{ pub.title if pub else doc.title }}</h1>
+</div></div>
+<section class="section"><div class="container grid-2">
+  <div>
+    {% if retired %}
+      <div class="notice">This document has been withdrawn and is no longer in force.</div>
+    {% else %}
+      {% if doc.summary %}<p>{{ doc.summary }}</p>{% endif %}
+      <div class="actions">
+        <a class="btn" href="/d/{{ doc.ref }}/v{{ pub.version }}.pdf" target="_blank" rel="noopener">Read version {{ pub.version }} (PDF)</a>
+        <a class="btn btn-outline" href="/d/{{ doc.ref }}/v{{ pub.version }}.pdf?download=1">Download</a>
+      </div>
+      {% if doc.status != "Published" %}
+        <p class="small muted">A new version is being prepared. Version {{ pub.version }} remains the one in force until the next one is published.</p>
+      {% endif %}
+    {% endif %}
+  </div>
+  <aside class="card">
+    <h3>About this document</h3>
+    <table>
+      <tr><th>Version in force</th><td>{{ doc.current_version }}</td></tr>
+      <tr><th>Published</th><td>{{ doc.published_at | fdate }}</td></tr>
+      {% if site.portal_show_owner %}<tr><th>Owner</th><td>{{ doc.owner.display }}</td></tr>{% endif %}
+      {% if pub and pub.approved_by %}<tr><th>Approved by</th><td>{{ pub.approved_by }}</td></tr>{% endif %}
+    </table>
+    {% if doc.terms %}<p style="margin-top:1rem">{% for t in doc.terms %}<a class="tag" href="/browse/{{ t.taxonomy.slug }}/{{ t.id }}">{{ t.name }}</a>{% endfor %}</p>{% endif %}
+    {% if not retired and doc.publications | length > 1 %}
+    <h3 style="margin-top:1rem">Previous versions</h3>
+    <ul>{% for p in doc.publications[1:] %}<li><a href="/d/{{ doc.ref }}/v{{ p.version }}.pdf" target="_blank" rel="noopener">Version {{ p.version }}</a> <span class="small muted">{{ p.published_at | fdate }}</span></li>{% endfor %}</ul>
+    {% endif %}
+  </aside>
+</div></section>
+{% endblock %}

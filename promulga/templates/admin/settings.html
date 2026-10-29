@@ -1,0 +1,105 @@
+{% extends "admin/base.html" %}
+{% block title %}Settings - {{ site.site_name }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="container">
+  <h1>Settings</h1>
+  <p class="muted">The workflow itself is fixed (Draft, Review, Revision, Approval, Published). Here you set its timing, the alerts, and the look of both sites.</p>
+</div></div>
+<section class="section"><div class="container">
+
+  <div class="card" id="look">
+    <h2>Appearance</h2>
+    <form method="post" action="/admin/settings/look" enctype="multipart/form-data">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <div class="row">
+        <div><label for="site_name">Site name</label><input id="site_name" type="text" name="site_name" value="{{ site.site_name }}" required></div>
+        <div style="flex:2"><label for="tagline">Tagline</label><input id="tagline" type="text" name="tagline" value="{{ site.tagline }}"></div>
+      </div>
+      <fieldset><legend>Colours</legend>
+        <div class="row">
+          {% for key, label in [('color_primary', 'Primary (headings, banner)'), ('color_primary_dark', 'Primary dark (navigation, footer)'),
+                                ('color_accent', 'Accent (buttons)'), ('color_success', 'Success (approve, published)'),
+                                ('color_text', 'Text'), ('color_background', 'Background')] %}
+          <label class="check"><input type="color" name="{{ key }}" value="{{ site[key] }}"> {{ label }}</label>
+          {% endfor %}
+        </div>
+      </fieldset>
+      <div class="row">
+        <div><label for="logo">Logo <span class="hint">(PNG, SVG...; shown in the navigation bar)</span></label>
+          {% if site.logo_asset %}<p><img src="/assets/{{ site.logo_asset }}" alt="Current logo" style="height:40px;background:var(--c-primary-dark);padding:4px;border-radius:6px"></p>
+          <label class="check"><input type="checkbox" name="remove_logo" value="1"> Remove the logo</label>{% endif %}
+          <input id="logo" type="file" name="logo" accept="image/*"></div>
+        <div><label for="banner">Banner image <span class="hint">(background of the portal home banner)</span></label>
+          {% if site.banner_asset %}<p><img src="/assets/{{ site.banner_asset }}" alt="Current banner" style="height:60px;border-radius:6px"></p>
+          <label class="check"><input type="checkbox" name="remove_banner" value="1"> Remove the banner image</label>{% endif %}
+          <input id="banner" type="file" name="banner" accept="image/*"></div>
+      </div>
+      <label for="banner_html">Banner HTML <span class="hint">(home page of the portal; scripts are removed)</span></label>
+      <textarea id="banner_html" name="banner_html" rows="5" style="font-family:monospace">{{ site.banner_html }}</textarea>
+      <label for="footer_html">Footer HTML <span class="hint">(both sites: links, legal notice, contact)</span></label>
+      <textarea id="footer_html" name="footer_html" rows="4" style="font-family:monospace">{{ site.footer_html }}</textarea>
+      <div class="actions"><button class="btn" type="submit">Save appearance</button> <a href="/" target="_blank" rel="noopener">Preview the portal</a></div>
+    </form>
+  </div>
+
+  <div class="card" id="workflow">
+    <h2>Deadlines and alerts</h2>
+    <form method="post" action="/admin/settings/workflow" enctype="multipart/form-data">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <fieldset><legend>Stage durations (calendar days)</legend>
+        <div class="row">
+          <div><label for="draft_days">Draft</label><input id="draft_days" type="number" min="1" max="365" name="draft_days" value="{{ site.stage_days.Draft }}"></div>
+          <div><label for="review_days">Review</label><input id="review_days" type="number" min="1" max="365" name="review_days" value="{{ site.stage_days.Review }}"></div>
+          <div><label for="revision_days">Revision</label><input id="revision_days" type="number" min="1" max="365" name="revision_days" value="{{ site.stage_days.Revision }}"></div>
+          <div><label for="approval_days">Approval</label><input id="approval_days" type="number" min="1" max="365" name="approval_days" value="{{ site.stage_days.Approval }}"></div>
+        </div>
+        <p class="hint">New durations apply to stages that start after the change.</p>
+      </fieldset>
+      <fieldset><legend>Reminders</legend>
+        <div class="row">
+          <div><label for="before">"Due soon" reminder, days before the deadline <span class="hint">(0 = none)</span></label>
+            <input id="before" type="number" min="0" max="60" name="reminder_before_days" value="{{ site.reminder_before_days }}"></div>
+          <div><label for="repeat">Repeat overdue reminders every N days <span class="hint">(0 = only once)</span></label>
+            <input id="repeat" type="number" min="0" max="60" name="overdue_repeat_days" value="{{ site.overdue_repeat_days }}"></div>
+          <div><label for="hour">Hour of the reminders <span class="hint">(server time, 0-23)</span></label>
+            <input id="hour" type="number" min="0" max="23" name="reminder_hour" value="{{ site.reminder_hour }}"></div>
+        </div>
+        <label class="check"><input type="checkbox" name="manager_digest" value="1" {{ 'checked' if site.manager_digest }}> Daily summary of overdue stages to the Document Managers</label>
+        <label class="check"><input type="checkbox" name="notify_on_publish" value="1" {{ 'checked' if site.notify_on_publish }}> E-mail all participants when a version is published</label>
+      </fieldset>
+      <fieldset><legend>Document types</legend>
+        <label for="doc_types">One per line, as <code>Name=PREFIX</code> <span class="hint">(the prefix builds the reference, e.g. POL-0001)</span></label>
+        <textarea id="doc_types" name="doc_types" rows="5" style="font-family:monospace">{% for t in site.doc_types %}{{ t.name }}={{ t.prefix }}
+{% endfor %}</textarea>
+        <p class="hint">Renaming a type does not change existing documents.</p>
+      </fieldset>
+      <fieldset><legend>Template</legend>
+        <p class="small">{% if site.template_asset %}A template is set: <a href="/admin/settings/template">download it</a>. It becomes the first revision of new documents created without a file.
+          <label class="check"><input type="checkbox" name="remove_template" value="1"> Remove the template</label>
+          {% else %}No template: owners start from their own file.{% endif %}</p>
+        <input type="file" name="template" accept=".docx,.doc,.odt">
+      </fieldset>
+      <div class="actions"><button class="btn" type="submit">Save deadlines and alerts</button></div>
+    </form>
+    <form method="post" action="/admin/reminders/run" class="actions">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="btn btn-sm btn-outline" type="submit">Send today's reminders now</button>
+      <span class="hint">Useful for testing; reminders already sent today for the same stage are not repeated.</span>
+    </form>
+  </div>
+
+  <div class="card" id="portal">
+    <h2>Public portal</h2>
+    <form method="post" action="/admin/settings/portal">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label class="check"><input type="radio" name="portal_access" value="public" {{ 'checked' if site.portal_access == 'public' }}> Public: anyone can read the published documents</label>
+      <label class="check"><input type="radio" name="portal_access" value="login" {{ 'checked' if site.portal_access == 'login' }}> Sign-in required (any account, including "viewer")</label>
+      <label class="check"><input type="checkbox" name="portal_show_owner" value="1" {{ 'checked' if site.portal_show_owner }}> Show the owner's name on the portal</label>
+      <div class="actions"><button class="btn" type="submit">Save portal settings</button></div>
+    </form>
+    <p class="hint">Server-side options (set in the <code>.env</code> file, see INSTALL.md): intranet-only portal (<code>PORTAL_ALLOWED_IPS</code>{% if cfg.portal_allowed_ips %}: {{ cfg.portal_allowed_ips | join(', ') }}{% endif %}),
+      separate host names for the two sites (<code>PUBLIC_HOST</code>/<code>ADMIN_HOST</code>), single sign-on (<code>OIDC_*</code>: {{ 'on' if cfg.oidc_enabled else 'off' }}),
+      e-mail (<code>SMTP_*</code>: {{ 'on' if cfg.smtp_enabled else 'off' }}), PDF conversion (<code>GOTENBERG_URL</code>: {{ 'on' if cfg.gotenberg_url else 'off' }}).</p>
+  </div>
+</div></section>
+{% endblock %}

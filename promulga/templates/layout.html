@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{{ site.site_name }}{% endblock %}</title>
+  <link rel="stylesheet" href="/static/promulga.css?v={{ app_version }}">
+  <link rel="stylesheet" href="/theme.css">
+  <link rel="icon" href="{{ '/assets/' ~ site.logo_asset if site.logo_asset else '/static/favicon.svg' }}">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  {% block navbar %}{% endblock %}
+  {% block banner %}{% endblock %}
+  <main id="main">
+    {% if messages %}
+    <div class="container">
+      {% for m in messages %}<div class="flash flash-{{ m.kind }}" role="status">{{ m.message }}</div>{% endfor %}
+    </div>
+    {% endif %}
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="footer">
+    <div class="footer-inner">
+      {{ site.footer_html | safe_html }}
+      <div class="footer-meta">Promulga {{ app_version }} - open-source governance document workflow, provided as is, without warranty.</div>
+    </div>
+  </footer>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,25 @@
+{% extends "admin/base.html" %}
+{% block title %}Outbox - {{ site.site_name }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="container">
+  <h1>Outbox</h1>
+  <p class="muted">Every e-mail of the application, newest first (last 200).
+    {% if smtp_enabled %}Pending e-mails are sent every minute.{% else %}<strong>SMTP is not configured: nothing is sent.</strong> Open an e-mail to read it or copy its link (useful for demos).{% endif %}</p>
+  {% if smtp_enabled %}<form method="post" action="/admin/outbox/flush"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-sm btn-outline" type="submit">Send pending e-mails now</button></form>{% endif %}
+</div></div>
+<section class="section"><div class="container">
+  <div class="table-wrap"><table>
+    <thead><tr><th>Created (UTC)</th><th>To</th><th>Subject</th><th>Status</th></tr></thead>
+    <tbody>
+    {% for m in mails %}
+      <tr>
+        <td class="small">{{ m.created_at | fdate }}</td>
+        <td class="small">{{ m.to }}</td>
+        <td><details><summary>{{ m.subject }}</summary><iframe class="mail" sandbox src="/admin/outbox/{{ m.id }}" title="E-mail {{ m.id }}" loading="lazy"></iframe></details></td>
+        <td class="small">{% if m.sent_at %}<span class="done">sent {{ m.sent_at | fdate }}</span>{% elif m.error %}<span class="late">error ({{ m.attempts }}): {{ m.error }}</span>{% else %}pending{% endif %}</td>
+      </tr>
+    {% else %}<tr><td colspan="4" class="empty">No e-mail yet.</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+</div></section>
+{% endblock %}

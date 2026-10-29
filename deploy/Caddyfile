@@ -1,0 +1,15 @@
+# SITE_DOMAIN comes from .env. Examples:
+#   SITE_DOMAIN=docs.example.org                      one host: portal at /, admin at /admin
+#   SITE_DOMAIN=docs.example.org, admin.example.org   two hosts (also set PUBLIC_HOST and ADMIN_HOST)
+#   SITE_DOMAIN=:80                                   plain HTTP, no certificate (local tests only)
+{$SITE_DOMAIN} {
+	encode gzip
+	request_body {
+		max_size 50MB
+	}
+	reverse_proxy app:8000
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+}

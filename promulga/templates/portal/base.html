@@ -1,0 +1,21 @@
+{% extends "layout.html" %}
+{% block navbar %}
+<nav class="navbar" aria-label="Main">
+  <div class="navbar-inner">
+    <a class="brand" href="/">
+      {% if site.logo_asset %}<img src="/assets/{{ site.logo_asset }}" alt="">{% endif %}
+      <span>{{ site.site_name }}</span>
+    </a>
+    <div class="nav-links">
+      <a href="/">Home</a>
+      <a href="/search">Search</a>
+      {% if user and user.role != 'viewer' %}<a href="/admin">Workspace</a>{% endif %}
+      {% if user %}
+        <form method="post" action="/auth/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="linklike" type="submit">Sign out</button></form>
+      {% else %}
+        <a href="/auth/login?next={{ request.url.path | urlencode }}">Sign in</a>
+      {% endif %}
+    </div>
+  </div>
+</nav>
+{% endblock %}

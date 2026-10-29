@@ -1,0 +1,8 @@
+{# One published document in a list. Expects `d` (Document). #}
+{% set pub = d.latest_publication %}
+<article class="card doc-card">
+  <div class="card-meta">{{ d.ref }} - {{ d.doc_type }} - version {{ d.current_version }}{% if pub %} - {{ pub.published_at | fdate }}{% endif %}</div>
+  <h3><a href="/d/{{ d.ref }}">{{ pub.title if pub else d.title }}</a></h3>
+  {% if d.summary %}<p>{{ d.summary }}</p>{% endif %}
+  <div>{% for t in d.terms %}<span class="tag">{{ t.name }}</span>{% endfor %}</div>
+</article>

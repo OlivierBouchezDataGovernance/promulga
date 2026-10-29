@@ -1,0 +1,30 @@
+{% extends "portal/base.html" %}
+{% block title %}{{ term.name if term else taxonomy.name }} - {{ site.site_name }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="container">
+  <div class="crumbs"><a href="/">Home</a> / <a href="/browse/{{ taxonomy.slug }}">{{ taxonomy.name }}</a>
+    {% for t in path[:-1] %} / <a href="/browse/{{ taxonomy.slug }}/{{ t.id }}">{{ t.name }}</a>{% endfor %}</div>
+  <h1>{{ term.name if term else taxonomy.name }}</h1>
+  {% if term and term.description %}<p class="muted">{{ term.description }}</p>
+  {% elif not term and taxonomy.description %}<p class="muted">{{ taxonomy.description }}</p>{% endif %}
+</div></div>
+<section class="section"><div class="container grid-2">
+  <div>
+    {% for d in documents %}{% include "portal/_doc_card.html" %}{% endfor %}
+    {% if term and not documents %}<p class="empty">No published document with this tag.</p>{% endif %}
+    {% if not term %}
+      <p class="muted">Choose a topic on the right.</p>
+      {% if untagged %}<h3>Not classified in {{ taxonomy.name }}</h3>
+        {% for d in untagged %}{% include "portal/_doc_card.html" %}{% endfor %}{% endif %}
+    {% endif %}
+  </div>
+  <aside class="card">
+    <h3>{{ "Sub-topics" if term else "Topics" }}</h3>
+    <ul class="term-list">
+      {% for t in children %}
+      <li><a href="/browse/{{ taxonomy.slug }}/{{ t.id }}">{{ t.name }}</a><span class="count">{{ counts[t.id] }}</span></li>
+      {% else %}<li class="empty">None.</li>{% endfor %}
+    </ul>
+  </aside>
+</div></section>
+{% endblock %}

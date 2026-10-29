@@ -1,0 +1,18 @@
+{% extends "portal/base.html" %}
+{% block title %}Search - {{ site.site_name }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="container">
+  <h1>Search</h1>
+  <form class="filters" method="get" action="/search" role="search">
+    <div><label for="q">Words</label><input id="q" type="search" name="q" value="{{ q }}" placeholder="e.g. data quality"></div>
+    <div><label for="type">Type</label>
+      <select id="type" name="type"><option value="">All types</option>
+        {% for t in types %}<option {{ "selected" if t == type }}>{{ t }}</option>{% endfor %}</select></div>
+    <div><button class="btn" type="submit">Search</button></div>
+  </form>
+</div></div>
+<section class="section"><div class="container">
+  <p class="muted">{{ documents | length }} document(s){% if q %} for "{{ q }}"{% endif %}.</p>
+  {% for d in documents %}{% include "portal/_doc_card.html" %}{% endfor %}
+</div></section>
+{% endblock %}

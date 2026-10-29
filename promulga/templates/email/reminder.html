@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+<body style="margin:0;padding:0;background:#f5f7fb;font-family:'Segoe UI',Arial,sans-serif;color:{{ site.color_text }}">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f5f7fb;padding:24px 0">
+    <tr><td align="center">
+      <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;background:#ffffff;border:1px solid #e4e8f0;border-radius:10px;overflow:hidden">
+        <tr><td style="background:{{ site.color_primary }};padding:16px 24px;color:#ffffff;font-weight:700;font-size:16px">
+          {{ site.site_name }}
+        </td></tr>
+        <tr><td style="padding:24px">
+          <h2 style="margin:0 0 16px;font-size:18px;color:{{ site.color_primary }}">
+            {% if manager %}Overdue stages in the register{% else %}Documents waiting for you{% endif %}
+          </h2>
+          <p style="font-size:14px">Hello {{ user.display }},</p>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:14px;border-collapse:collapse">
+            {% for it in items %}
+            <tr><td style="padding:10px 0;border-top:1px solid #e4e8f0">
+              <a href="{{ it.link }}" style="color:{{ site.color_primary }};font-weight:600;text-decoration:none">{{ it.ref }} - {{ it.title }}</a><br>
+              <span style="color:#5c6b82">{{ it.status }} stage, due {{ it.due }}</span>
+              {% if it.kind == 'overdue' %}<strong style="color:#b42318"> - {{ it.days }} day(s) late</strong>
+              {% else %}<span style="color:#b8933f"> - due in {{ it.days }} day(s)</span>{% endif %}<br>
+              {% if manager %}Waiting for: {{ it.waiting_for or 'nobody' }}{% else %}Please {{ it.expected }}.{% endif %}
+            </td></tr>
+            {% endfor %}
+          </table>
+          {% if manager %}<p style="font-size:13px;color:#5c6b82">As Document Manager you can close a stuck review or change participants on the document page.</p>{% endif %}
+          <p style="margin:20px 0 4px"><a href="{{ base_url }}/admin" style="display:inline-block;background:{{ site.color_accent }};color:{{ site.color_primary_dark }};padding:11px 22px;border-radius:999px;font-weight:600;text-decoration:none;font-size:14px">Open my tasks</a></p>
+        </td></tr>
+        <tr><td style="padding:12px 24px;background:#f5f7fb;color:#8a98ac;font-size:12px">
+          Automatic reminder from {{ site.site_name }}. The frequency is set by your administrator.
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>

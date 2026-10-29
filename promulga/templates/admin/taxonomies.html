@@ -1,0 +1,58 @@
+{% extends "admin/base.html" %}
+{% block title %}Tags - {{ site.site_name }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="container">
+  <h1>Taxonomies and tags</h1>
+  <p class="muted">Each taxonomy is a navigation hierarchy of the portal (for example Domain, Regulation, Audience).
+    Tags can be nested: a document tagged "Data quality" also appears under its parent "Data governance".</p>
+</div></div>
+<section class="section"><div class="container">
+  {% for tax in taxonomies %}
+  <div class="card" id="tax-{{ tax.id }}">
+    <form method="post" action="/admin/taxonomies/{{ tax.id }}" class="row" style="align-items:end">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <div><label>Taxonomy</label><input type="text" name="name" value="{{ tax.name }}" required></div>
+      <div style="flex:2"><label>Description</label><input type="text" name="description" value="{{ tax.description }}"></div>
+      <div style="flex:0 0 90px"><label>Order</label><input type="number" name="sort" value="{{ tax.sort }}"></div>
+      <div style="flex:0 0 auto"><button class="btn btn-sm btn-outline" type="submit">Save</button>
+        <button class="btn btn-sm btn-danger" type="submit" name="delete" value="1" onclick="return confirm('Delete the taxonomy {{ tax.name }} and all its tags? Documents keep existing.')">Delete</button></div>
+    </form>
+    <p class="small muted">Portal address: <a href="/browse/{{ tax.slug }}">/browse/{{ tax.slug }}</a></p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Tag</th><th>Parent</th><th>Order</th><th></th></tr></thead>
+      <tbody>
+      {% for t in tax.terms %}
+        {% set f = 'term-' ~ t.id %}
+        <tr>
+          <td><input form="{{ f }}" type="text" name="name" value="{{ t.name }}" aria-label="Tag name"></td>
+          <td><select form="{{ f }}" name="parent_id" aria-label="Parent"><option value="">(top level)</option>
+            {% for p in tax.terms if p.id != t.id %}<option value="{{ p.id }}" {{ 'selected' if p.id == t.parent_id }}>{{ p.name }}</option>{% endfor %}</select></td>
+          <td style="width:90px"><input form="{{ f }}" type="number" name="sort" value="{{ t.sort }}" aria-label="Order"></td>
+          <td><form id="{{ f }}" class="inline-form" method="post" action="/admin/terms/{{ t.id }}"><input type="hidden" name="csrf" value="{{ csrf }}">
+            <button class="btn btn-sm btn-outline" type="submit">Save</button>
+            <button class="btn btn-sm btn-danger" type="submit" name="delete" value="1" onclick="return confirm('Delete the tag {{ t.name }}?')">Delete</button></form></td>
+        </tr>
+      {% else %}<tr><td colspan="4" class="empty">No tag yet.</td></tr>{% endfor %}
+      </tbody>
+    </table></div>
+    <form method="post" action="/admin/taxonomies/{{ tax.id }}/terms" class="row" style="align-items:end;margin-top:.75rem">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <div><label>New tag</label><input type="text" name="name" required></div>
+      <div><label>Under</label><select name="parent_id"><option value="">(top level)</option>
+        {% for p in tax.terms %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}</select></div>
+      <div style="flex:2"><label>Description <span class="hint">(optional)</span></label><input type="text" name="description"></div>
+      <div style="flex:0 0 auto"><button class="btn btn-sm" type="submit">Add tag</button></div>
+    </form>
+  </div>
+  {% endfor %}
+  <div class="card">
+    <h2>New taxonomy</h2>
+    <form method="post" action="/admin/taxonomies/new" class="row" style="align-items:end">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <div><label>Name</label><input type="text" name="name" required placeholder="e.g. Domain"></div>
+      <div style="flex:2"><label>Description</label><input type="text" name="description"></div>
+      <div style="flex:0 0 auto"><button class="btn" type="submit">Create</button></div>
+    </form>
+  </div>
+</div></section>
+{% endblock %}

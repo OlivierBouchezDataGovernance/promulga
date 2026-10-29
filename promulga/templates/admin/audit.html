@@ -1,0 +1,30 @@
+{% extends "admin/base.html" %}
+{% block title %}Audit log - {{ site.site_name }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="container">
+  <h1>Audit log</h1>
+  <p class="muted">Every action of the workflow and of the administration. Lines are never modified nor deleted.</p>
+  <form class="filters" method="get" action="/admin/audit">
+    <div><label for="ref">Document</label><input id="ref" type="text" name="ref" value="{{ ref }}" placeholder="POL-0001"></div>
+    <div><label for="q">Text</label><input id="q" type="search" name="q" value="{{ q }}" placeholder="action, person, detail"></div>
+    <div><button class="btn btn-sm" type="submit">Filter</button>
+      <a class="btn btn-sm btn-outline" href="/admin/audit.csv?{{ request.url.query }}">Export CSV</a></div>
+  </form>
+</div></div>
+<section class="section"><div class="container">
+  <div class="table-wrap"><table>
+    <thead><tr><th>When (UTC)</th><th>Document</th><th>Version</th><th>Stage</th><th>Action</th><th>By</th><th>Detail</th></tr></thead>
+    <tbody>
+    {% for e in events %}
+      <tr class="small">
+        <td>{{ e.created_at | fdate }}</td>
+        <td>{% if e.document_id %}<a href="/admin/documents/{{ e.document_id }}">{{ e.document_ref }}</a>{% else %}{{ e.document_ref or '-' }}{% endif %}</td>
+        <td>{{ e.version }}</td>
+        <td>{% if e.from_status and e.from_status != e.to_status %}{{ e.from_status }} &rarr; {% endif %}{{ e.to_status }}</td>
+        <td>{{ e.action }}</td><td>{{ e.actor_label }}</td><td>{{ e.detail }}</td>
+      </tr>
+    {% else %}<tr><td colspan="7" class="empty">Nothing found.</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+</div></section>
+{% endblock %}

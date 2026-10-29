@@ -1,0 +1,48 @@
+{% extends "portal/base.html" %}
+{% block banner %}
+<section class="banner">
+  <div class="banner-inner">
+    {{ site.banner_html | safe_html }}
+    <form class="hero-search" action="/search" method="get" role="search">
+      <input type="search" name="q" placeholder="Search {{ total }} published document(s)" aria-label="Search">
+      <button class="btn" type="submit">Search</button>
+    </form>
+  </div>
+</section>
+{% endblock %}
+{% block content %}
+<section class="section">
+  <div class="container">
+    {% if cards %}
+    <div class="eyebrow">Browse</div>
+    <div class="grid">
+      {% for c in cards %}
+      <div class="card">
+        <h2><a href="/browse/{{ c.taxonomy.slug }}">{{ c.taxonomy.name }}</a></h2>
+        {% if c.taxonomy.description %}<p class="muted small">{{ c.taxonomy.description }}</p>{% endif %}
+        <ul class="term-list">
+          {% for t in c.roots %}
+          <li><a href="/browse/{{ c.taxonomy.slug }}/{{ t.id }}">{{ t.name }}</a><span class="count">{{ c.counts[t.id] }}</span></li>
+          {% else %}<li class="empty">No tags yet.</li>{% endfor %}
+        </ul>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% if types %}
+    <p class="small muted" style="margin-top:1rem">By type:
+      {% for t in types %}<a class="tag" href="/search?type={{ t | urlencode }}">{{ t }}</a>{% endfor %}</p>
+    {% endif %}
+  </div>
+</section>
+<section class="section section-alt">
+  <div class="container">
+    <div class="eyebrow">Recently published</div>
+    {% for p in latest %}
+      {% with d = p.document %}{% include "portal/_doc_card.html" %}{% endwith %}
+    {% else %}
+      <p class="empty">Nothing is published yet.</p>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

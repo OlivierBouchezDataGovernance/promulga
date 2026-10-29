@@ -1,0 +1,231 @@
+{% extends "admin/base.html" %}
+{% from "admin/_macros.html" import status, due %}
+{% block title %}{{ doc.ref }} - {{ site.site_name }}{% endblock %}
+{% block content %}
+{% set steps = ["Draft", "Review", "Revision", "Approval", "Published"] %}
+{% set idx = steps.index(doc.status) if doc.status in steps else 4 %}
+<div class="page-head"><div class="container">
+  <div class="crumbs"><a href="/admin/documents">Register</a> / {{ doc.ref }}</div>
+  <div class="eyebrow">{{ doc.ref }} - {{ doc.doc_type }}</div>
+  <h1>{{ doc.title }} {{ status(doc.status) }}</h1>
+  <div class="stepper" aria-label="Workflow stage">
+    {% for s in steps %}
+      <div class="step {{ 'current' if loop.index0 == idx and doc.status != 'Retired' else ('done' if loop.index0 < idx) }}">{{ s }}</div>
+    {% endfor %}
+  </div>
+  <p class="muted small">
+    {% if doc.status in ['Published', 'Retired'] %}Version in force: <strong>{{ doc.current_version }}</strong>, published {{ doc.published_at | fdate }}.
+    {% else %}Preparing version <strong>{{ doc.next_version }}</strong>{% if doc.current_version %} (in force: {{ doc.current_version }}){% endif %}. Stage due: {{ due(doc) }}.
+      {% if pending %}Waiting for: <strong>{{ pending | map(attribute='display') | join(', ') }}</strong>.{% endif %}{% endif %}
+  </p>
+</div></div>
+
+<section class="section"><div class="container grid-2">
+<div>
+
+  {# ------------------------------------------------ What do I have to do? #}
+  {% if has_task %}
+  <div class="card" style="border-left:4px solid var(--c-accent)">
+    <h2>Your action</h2>
+
+    {% if 'checkin' in actions %}
+      <p>{% if doc.status == 'Draft' %}Write the document: download the working file (check-out), edit it in Word, then upload it again (check-in).
+         {% else %}Process the comments below: reply to them, mark them resolved, check in the corrected file.{% endif %}</p>
+      <div class="actions">
+        {% if 'checkout' in actions and doc.latest_revision %}
+        <form class="inline-form" method="post" action="/admin/documents/{{ doc.id }}/checkout"><input type="hidden" name="csrf" value="{{ csrf }}">
+          <button class="btn btn-outline" type="submit">Check out (download to edit)</button></form>
+        {% endif %}
+        {% if 'release' in actions %}
+        <form class="inline-form" method="post" action="/admin/documents/{{ doc.id }}/release"><input type="hidden" name="csrf" value="{{ csrf }}">
+          <button class="btn btn-sm btn-outline" type="submit">Release the check-out</button></form>
+        {% endif %}
+      </div>
+      {% if doc.checked_out_by %}<p class="notice small">Checked out by {{ doc.checked_out_by.display }} since {{ doc.checked_out_at | fdate }} (UTC).</p>{% endif %}
+      <form method="post" action="/admin/documents/{{ doc.id }}/checkin" enctype="multipart/form-data">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <label for="file">Check in a new revision <span class="hint">(.docx, .odt, .pdf ... up to {{ max_mb }} MB)</span></label>
+        <input id="file" type="file" name="file" required>
+        <label for="note">What changed? <span class="hint">(optional)</span></label>
+        <input id="note" type="text" name="note" maxlength="500">
+        <div class="actions"><button class="btn btn-outline" type="submit">Check in</button></div>
+      </form>
+      {% if 'submit' in actions %}
+      <form method="post" action="/admin/documents/{{ doc.id }}/action/submit" onsubmit="return confirm('Submit {{ doc.ref }}? You will not be able to change the file until it comes back to you.')">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <div class="actions"><button class="btn" type="submit">
+          {% if doc.status == 'Draft' and doc.reviewers %}Submit for review{% else %}Submit for approval{% endif %}</button>
+          {% if open_comments and doc.status == 'Revision' %}<span class="small late">{{ open_comments }} comment(s) still open</span>{% endif %}</div>
+      </form>
+      {% endif %}
+    {% endif %}
+
+    {% if 'review_done' in actions %}
+      <p>Download the current file, add your remarks as comments below (you may attach an annotated copy), then confirm.</p>
+      <form method="post" action="/admin/documents/{{ doc.id }}/action/review_done">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <label for="rnote">Summary for the owner <span class="hint">(optional)</span></label>
+        <input id="rnote" type="text" name="note" maxlength="1000">
+        <div class="actions"><button class="btn btn-green" type="submit">Review done</button></div>
+      </form>
+    {% endif %}
+
+    {% if 'approve' in actions %}
+      <p>Read version {{ doc.next_version }}, then approve it, or reject it with an explanation.</p>
+      <form method="post" action="/admin/documents/{{ doc.id }}/action/approve" id="decision">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <label for="anote">Comment <span class="hint">(required to reject)</span></label>
+        <textarea id="anote" name="note" rows="3" maxlength="5000"></textarea>
+        <div class="actions">
+          <button class="btn btn-green" type="submit" onclick="return confirm('Approve {{ doc.ref }} version {{ doc.next_version }}?')">Approve</button>
+          <button class="btn btn-danger" type="submit" formaction="/admin/documents/{{ doc.id }}/action/reject"
+                  onclick="if(!document.getElementById('anote').value.trim()){alert('Please explain why you reject the document.');return false;} return confirm('Reject {{ doc.ref }}? It goes back to the owner.')">Reject</button>
+        </div>
+      </form>
+    {% endif %}
+
+    {% if 'close_review' in actions %}
+      <details><summary>Close the review now (Document Manager)</summary>
+      <form method="post" action="/admin/documents/{{ doc.id }}/action/close_review">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <p class="small muted">Moves the document to Revision without waiting for {{ pending | map(attribute='display') | join(', ') or 'anyone' }}.</p>
+        <input type="text" name="note" placeholder="Reason (optional)">
+        <div class="actions"><button class="btn btn-sm btn-outline" type="submit">Close review</button></div>
+      </form></details>
+    {% endif %}
+
+    {% if 'new_revision' in actions %}
+      <form method="post" action="/admin/documents/{{ doc.id }}/action/new_revision">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <p>Start the next version. The owner gets the last file back in Draft; the published PDF stays in force until the next publication.</p>
+        <div class="row">
+          <label class="check"><input type="radio" name="bump" value="minor" checked> Minor ({{ doc.current_version }} &rarr; next minor)</label>
+          <label class="check"><input type="radio" name="bump" value="major"> Major (next major version)</label>
+        </div>
+        <input type="text" name="note" placeholder="Why a new version? (optional)">
+        <div class="actions"><button class="btn" type="submit">Start new revision</button></div>
+      </form>
+    {% endif %}
+
+    {% if 'retire' in actions %}
+      <details><summary>Withdraw from the portal</summary>
+      <form method="post" action="/admin/documents/{{ doc.id }}/action/retire" onsubmit="return confirm('Withdraw {{ doc.ref }} from the portal?')">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="text" name="note" placeholder="Reason (required)" required>
+        <div class="actions"><button class="btn btn-sm btn-danger" type="submit">Withdraw</button></div>
+      </form></details>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {# ------------------------------------------------ Files #}
+  <div class="card">
+    <h2>Working files</h2>
+    {% if doc.revisions %}
+    <div class="table-wrap"><table>
+      <thead><tr><th>Rev.</th><th>File</th><th>By</th><th>When (UTC)</th><th>Note</th></tr></thead>
+      <tbody>
+      {% for r in doc.revisions %}
+        <tr><td>r{{ r.number }}{% if loop.first %} <span class="tag">latest</span>{% endif %}</td>
+          <td><a href="/admin/documents/{{ doc.id }}/revisions/{{ r.id }}" {% if loop.first %}id="latest-file"{% endif %}>{{ r.filename }}</a><br><span class="small muted">{{ r.size | filesize }} - {{ r.status_at_upload }}</span></td>
+          <td class="small">{{ r.uploaded_by.display }}</td><td class="small">{{ r.uploaded_at | fdate }}</td><td class="small">{{ r.note }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    {% else %}<p class="empty">No file yet. The owner checks in the first version.</p>{% endif %}
+  </div>
+
+  {# ------------------------------------------------ Comments #}
+  <div class="card" id="comments">
+    <h2>Comments {% if open_comments %}<span class="pill-count">{{ open_comments }} open</span>{% endif %}</h2>
+    {% for c in comments %}
+      <div class="comment {{ 'resolved' if c.resolved }}">
+        <div class="meta"><strong>{{ c.author.display }}</strong> - {{ c.created_at | fdate }} UTC - {{ c.stage }}, version {{ c.version }}{% if c.revision %}, on r{{ c.revision.number }}{% endif %}
+          {% if c.resolved %} - <span class="done">resolved</span>{% endif %}</div>
+        <div class="body">{{ c.body }}</div>
+        {% if c.attachment_name %}<p class="small"><a href="/admin/documents/{{ doc.id }}/comments/{{ c.id }}/attachment">{{ c.attachment_name }}</a></p>{% endif %}
+        {% if replies.get(c.id) %}<div class="replies">
+          {% for r in replies[c.id] %}<div class="comment"><div class="meta"><strong>{{ r.author.display }}</strong> - {{ r.created_at | fdate }} UTC</div><div class="body">{{ r.body }}</div>
+            {% if r.attachment_name %}<p class="small"><a href="/admin/documents/{{ doc.id }}/comments/{{ r.id }}/attachment">{{ r.attachment_name }}</a></p>{% endif %}</div>{% endfor %}
+        </div>{% endif %}
+        {% if 'comment' in actions %}
+        <div class="actions">
+          <details><summary class="small">Reply</summary>
+            <form method="post" action="/admin/documents/{{ doc.id }}/comments"><input type="hidden" name="csrf" value="{{ csrf }}">
+              <input type="hidden" name="parent_id" value="{{ c.id }}"><textarea name="body" rows="2" required></textarea>
+              <button class="btn btn-sm btn-outline" type="submit">Send reply</button></form></details>
+          {% if doc.owner_id == user.id or c.author_id == user.id or user.has_role('manager') %}
+          <form class="inline-form" method="post" action="/admin/documents/{{ doc.id }}/comments/{{ c.id }}/resolve"><input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="resolved" value="{{ '0' if c.resolved else '1' }}">
+            <button class="btn btn-sm btn-outline" type="submit">{{ 'Reopen' if c.resolved else 'Mark resolved' }}</button></form>
+          {% endif %}
+        </div>
+        {% endif %}
+      </div>
+    {% else %}<p class="empty">No comment yet.</p>{% endfor %}
+    {% if 'comment' in actions %}
+    <form method="post" action="/admin/documents/{{ doc.id }}/comments" enctype="multipart/form-data" style="margin-top:1rem">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label for="body">New comment <span class="hint">(quote the section or page you comment on)</span></label>
+      <textarea id="body" name="body" rows="4" maxlength="10000"></textarea>
+      <label for="cfile">Attachment <span class="hint">(optional, e.g. the file annotated with Word comments)</span></label>
+      <input id="cfile" type="file" name="file">
+      <div class="actions"><button class="btn btn-outline" type="submit">Add comment</button></div>
+    </form>
+    {% endif %}
+  </div>
+
+  {# ------------------------------------------------ History #}
+  <div class="card">
+    <h2>History</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>When (UTC)</th><th>Version</th><th>Stage</th><th>Action</th><th>By</th><th>Detail</th></tr></thead>
+      <tbody>{% for e in events %}
+        <tr class="small"><td>{{ e.created_at | fdate }}</td><td>{{ e.version }}</td>
+          <td>{% if e.from_status and e.from_status != e.to_status %}{{ e.from_status }} &rarr; {% endif %}{{ e.to_status }}</td>
+          <td>{{ e.action }}</td><td>{{ e.actor_label }}</td><td>{{ e.detail }}</td></tr>
+      {% endfor %}</tbody>
+    </table></div>
+  </div>
+</div>
+
+{# ------------------------------------------------ Side panel #}
+<aside>
+  <div class="card">
+    <h3>Participants</h3>
+    <ul class="people" style="list-style:none;padding:0">
+      <li><strong>Owner:</strong> {{ doc.owner.display }}</li>
+      <li><strong>Reviewers:</strong>
+        {% for a in doc.reviewers %}<br>{{ a.user.display }}{% if doc.status == 'Review' %} {% if a.acted_at %}<span class="done">&check; done</span>{% else %}<span class="muted">(waiting)</span>{% endif %}{% endif %}
+        {% else %}<span class="muted">none</span>{% endfor %}</li>
+      <li><strong>Approvers:</strong>
+        {% for a in doc.approvers %}<br>{{ a.user.display }}{% if doc.status == 'Approval' %} {% if a.acted_at %}<span class="done">&check; approved</span>{% else %}<span class="muted">(waiting)</span>{% endif %}{% endif %}
+        {% endfor %}</li>
+    </ul>
+    {% if 'edit' in actions %}<p><a class="btn btn-sm btn-outline" href="/admin/documents/{{ doc.id }}/edit">Edit details and participants</a></p>{% endif %}
+  </div>
+  <div class="card">
+    <h3>Details</h3>
+    {% if doc.summary %}<p class="small">{{ doc.summary }}</p>{% endif %}
+    <p>{% for t in doc.terms %}<span class="tag">{{ t.taxonomy.name }}: {{ t.name }}</span>{% else %}<span class="muted small">No tags.</span>{% endfor %}</p>
+    <p class="small muted">Created {{ doc.created_at | fdate }} UTC.</p>
+  </div>
+  <div class="card">
+    <h3>Published versions</h3>
+    {% for p in doc.publications %}
+      <p class="small"><a href="/admin/documents/{{ doc.id }}/publications/{{ p.id }}.pdf" target="_blank" rel="noopener">Version {{ p.version }}</a> - {{ p.published_at | fdate }}<br>
+        <span class="muted">Approved by {{ p.approved_by }}<br>SHA-256 {{ p.sha256[:16] }}...</span></p>
+    {% else %}<p class="empty small">Not published yet.</p>{% endfor %}
+    {% if doc.current_version and doc.status != 'Retired' %}<p><a class="small" href="/d/{{ doc.ref }}">See it on the portal</a></p>{% endif %}
+  </div>
+</aside>
+</div></section>
+{% endblock %}
+{% block scripts %}
+{% if request.query_params.get('download') %}
+<script>
+  // After a check-out, start the download of the latest working file.
+  (function () { var a = document.getElementById('latest-file'); if (a) { window.location.href = a.href; } })();
+</script>
+{% endif %}
+{% endblock %}

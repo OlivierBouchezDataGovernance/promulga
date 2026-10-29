@@ -1,0 +1,36 @@
+{% macro status(s) %}<span class="status status-{{ s }}">{{ s }}</span>{% endmacro %}
+
+{% macro due(doc) %}
+  {% if doc.stage_due %}<span class="{{ 'late' if doc.is_overdue }}">{{ doc.stage_due | fdate }}{% if doc.is_overdue %} (overdue){% endif %}</span>{% else %}-{% endif %}
+{% endmacro %}
+
+{% macro task_table(docs, empty, pending) %}
+  {% if docs %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Document</th><th>Stage</th><th>Due</th><th>Waiting for</th></tr></thead>
+    <tbody>
+    {% for d in docs %}
+      <tr>
+        <td><a href="/admin/documents/{{ d.id }}"><strong>{{ d.ref }}</strong> {{ d.title }}</a><br><span class="small muted">{{ d.doc_type }} - version {{ d.next_version }}</span></td>
+        <td>{{ status(d.status) }}</td>
+        <td>{{ due(d) }}</td>
+        <td class="small">{{ pending(d) | map(attribute='display') | join(', ') or '-' }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<p class="empty">{{ empty }}</p>{% endif %}
+{% endmacro %}
+
+{% macro term_checkboxes(taxonomies, selected) %}
+  {% for tax in taxonomies %}
+  <fieldset>
+    <legend>{{ tax.name }}</legend>
+    {% for t in tax.terms %}
+      <label class="check" style="margin-left:{{ '1.25rem' if t.parent_id else '0' }}">
+        <input type="checkbox" name="terms" value="{{ t.id }}" {{ 'checked' if t.id in selected }}> {{ t.name }}
+      </label>
+    {% else %}<p class="empty small">No tags in this taxonomy yet.</p>{% endfor %}
+  </fieldset>
+  {% else %}<p class="empty small">No taxonomy yet: create some under Tags.</p>{% endfor %}
+{% endmacro %}

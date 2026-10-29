@@ -1,0 +1,35 @@
+{% extends "layout.html" %}
+{% block navbar %}
+<nav class="navbar" aria-label="Workspace">
+  <div class="navbar-inner">
+    <a class="brand" href="/admin">
+      {% if site.logo_asset %}<img src="/assets/{{ site.logo_asset }}" alt="">{% endif %}
+      <span>{{ site.site_name }}</span> <span class="badge-env">Workspace</span>
+    </a>
+    <div class="nav-links">
+      <a href="/" title="Public portal">Portal</a>
+      <a href="/admin/account">{{ user.display }}</a>
+      <form method="post" action="/auth/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="linklike" type="submit">Sign out</button></form>
+    </div>
+  </div>
+</nav>
+<nav class="navbar admin-bar" aria-label="Sections" style="position:static">
+  <div class="navbar-inner">
+    <div class="nav-links">
+      {% set path = request.url.path %}
+      <a href="/admin" class="{{ 'active' if path == '/admin' }}">My tasks</a>
+      <a href="/admin/documents" class="{{ 'active' if path.startswith('/admin/documents') and path != '/admin/documents/new' }}">Register</a>
+      {% if user.has_role('manager') %}
+        <a href="/admin/documents/new" class="{{ 'active' if path == '/admin/documents/new' }}">+ New document</a>
+        <a href="/admin/taxonomies" class="{{ 'active' if path.startswith('/admin/taxonomies') }}">Tags</a>
+        <a href="/admin/audit" class="{{ 'active' if path.startswith('/admin/audit') }}">Audit log</a>
+      {% endif %}
+      {% if user.has_role('admin') %}
+        <a href="/admin/users" class="{{ 'active' if path.startswith('/admin/users') }}">Users</a>
+        <a href="/admin/settings" class="{{ 'active' if path.startswith('/admin/settings') }}">Settings</a>
+        <a href="/admin/outbox" class="{{ 'active' if path.startswith('/admin/outbox') }}">Outbox</a>
+      {% endif %}
+    </div>
+  </div>
+</nav>
+{% endblock %}
