@@ -14,6 +14,7 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config as AlembicConfig
+from alembic.runtime.migration import MigrationContext
 from sqlalchemy import inspect
 
 BASELINE = "0001_baseline"
@@ -39,7 +40,8 @@ def upgrade(engine) -> None:
         with connection.begin():
             tables = set(inspect(connection).get_table_names())
             cfg = _config(connection)
-            if "documents" in tables and "alembic_version" not in tables:
+            current = MigrationContext.configure(connection).get_current_revision()
+            if "documents" in tables and current is None:     # a 0.1 database (or an interrupted first upgrade)
                 command.stamp(cfg, BASELINE)
             command.upgrade(cfg, "head")
         if sqlite:

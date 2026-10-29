@@ -236,7 +236,7 @@ def test_migration_from_v01_database(tmp_path):
     engine = create_engine(f"sqlite:///{(tmp_path / 'old.sqlite3').as_posix()}")
     with engine.begin() as c:
         command.upgrade(migrate._config(c), migrate.BASELINE)
-        c.execute(text("DROP TABLE alembic_version"))          # what a 0.1 database looks like
+        c.execute(text("DELETE FROM alembic_version"))         # a 0.1 database, or an interrupted first upgrade
         c.execute(text("INSERT INTO users (id, email, name, role, active, created_at) "
                        "VALUES (1, 'u@example.org', '', 'admin', 1, '2026-01-01')"))
         c.execute(text("INSERT INTO documents (id, ref, title, summary, doc_type, status, owner_id, stage_started_at, "
