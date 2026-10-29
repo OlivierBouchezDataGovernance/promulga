@@ -2,7 +2,7 @@
 # + optional online editor (OnlyOffice, profile "editor").
 #
 #   ./deploy/setup.sh                              # creates .env and secrets/ with safe permissions
-#   docker compose up -d --build                   # without the online editor
+#   docker compose up -d                           # without the online editor (add --build to build from source)
 #   docker compose --profile editor up -d --build  # with the online editor (needs ~2 GB of RAM more)
 #
 # Data (database, files, images, signing key) lives in the "promulga-data" volume.
@@ -12,7 +12,7 @@
 services:
   app:
     build: .
-    image: promulga:latest
+    image: ${PROMULGA_IMAGE:-ghcr.io/olivierbouchezdatagovernance/promulga:latest}
     restart: unless-stopped
     env_file: .env
     environment:

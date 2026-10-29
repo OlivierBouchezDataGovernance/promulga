@@ -1,0 +1,89 @@
+# Tests on every push; on a version tag (v0.2.0...) also:
+#   - builds the Docker image for linux/amd64 and linux/arm64 (Apple silicon) and pushes it to
+#     ghcr.io/<owner>/promulga with the tags <version>, <major.minor> and latest;
+#   - creates the GitHub release with promulga-docker.zip (compose file using that image,
+#     .env.example, deploy/ scripts, docs, licence), the file linked from promulga.com.
+name: tests and release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: pytest -q
+
+  image:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/promulga
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+          labels: |
+            org.opencontainers.image.title=Promulga
+            org.opencontainers.image.description=Governance of governance documents
+            org.opencontainers.image.url=https://promulga.com
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  bundle:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build promulga-docker.zip
+        run: |
+          owner=$(echo "${{ github.repository_owner }}" | tr 'A-Z' 'a-z')
+          mkdir -p bundle/promulga
+          # Same compose file, without the build section: Docker pulls the published image.
+          sed -e '/^    build: \.$/d' \
+              -e "s|ghcr.io/olivierbouchezdatagovernance/promulga:latest|ghcr.io/${owner}/promulga:${GITHUB_REF_NAME#v}|" \
+              docker-compose.yml > bundle/promulga/docker-compose.yml
+          cp -r .env.example deploy docs LICENSE README.md bundle/promulga/
+          chmod +x bundle/promulga/deploy/*.sh
+          (cd bundle/promulga && zip -r ../promulga-docker.zip . -x '*.DS_Store')
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: bundle/promulga-docker.zip
+          generate_release_notes: true
