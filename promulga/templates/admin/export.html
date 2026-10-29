@@ -16,7 +16,7 @@
   <div class="card">
     <h2>GitHub</h2>
     {% if cfg.github_enabled %}
-      <p class="small">Repository <code>{{ cfg.github_repo }}</code>, branch <code>{{ cfg.github_branch }}</code>, folder <code>/{{ cfg.github_path }}</code>.
+      <p class="small">Repository <code>{{ cfg.github_repo }}</code>, branch <code>{{ cfg.github_branch }}</code>, folder <code>/{{ cfg.github_folder }}</code>.
         The folder is replaced by the package in one commit; unchanged files are not re-uploaded.</p>
       {% if cfg.export_site_url %}<p class="small">Public address: <a href="{{ cfg.export_site_url }}/index.html" target="_blank" rel="noopener">{{ cfg.export_site_url }}</a></p>{% endif %}
       <form method="post" action="/admin/export/github" onsubmit="return confirm('Publish {{ docs | length }} document(s) to {{ cfg.github_repo }}?')">
@@ -25,7 +25,7 @@
       </form>
       <p class="hint">Last export: {{ site.last_export or 'never' }}. Automatic after each publication: {{ 'on' if site.export_auto else 'off' }} (<a href="/admin/settings#integrations">change</a>).</p>
     {% else %}
-      <p class="small">Not configured. In <code>.env</code>: <code>GITHUB_REPO=owner/repository</code>, <code>GITHUB_BRANCH</code>, <code>GITHUB_PATH</code>,
+      <p class="small">Not configured. In <code>.env</code>: <code>GITHUB_REPO=owner/repository</code>, <code>GITHUB_BRANCH</code>, <code>GITHUB_FOLDER</code>,
         <code>EXPORT_SITE_URL</code>, and a fine-grained token (Contents: read and write, this repository only) in <code>secrets/github_token</code>. See INSTALL.md.</p>
     {% endif %}
   </div>

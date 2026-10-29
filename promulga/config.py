@@ -98,7 +98,7 @@ class Config:
     export_site_url: str = ""     # where the exported package will be served, for absolute links
     github_repo: str = ""         # owner/name
     github_branch: str = "main"
-    github_path: str = "policies"
+    github_folder: str = "policies"
     github_token: str = ""
     # OnlyOffice online editor
     onlyoffice_url: str = ""          # as seen by the browser, e.g. /onlyoffice
@@ -194,7 +194,7 @@ def load_config() -> Config:
         export_site_url=(env("EXPORT_SITE_URL") or "").rstrip("/"),
         github_repo=env("GITHUB_REPO", ""),
         github_branch=env("GITHUB_BRANCH") or "main",
-        github_path=(env("GITHUB_PATH") or "policies").strip("/"),
+        github_folder=(env("GITHUB_FOLDER") or "policies").strip("/"),
         github_token=s["GITHUB_TOKEN"],
         onlyoffice_url=(env("ONLYOFFICE_URL") or "").rstrip("/"),
         onlyoffice_internal_url=(env("ONLYOFFICE_INTERNAL_URL") or "").rstrip("/"),

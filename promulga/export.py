@@ -10,7 +10,7 @@ The package is a folder that any web server can serve as it is:
     SHA256SUMS          checksums, to verify that nothing was altered
 
 It can be downloaded as a .zip, or pushed in one commit to a folder of a GitHub
-repository (GITHUB_REPO, GITHUB_BRANCH, GITHUB_PATH, GITHUB_TOKEN), for
+repository (GITHUB_REPO, GITHUB_BRANCH, GITHUB_FOLDER, GITHUB_TOKEN), for
 example the repository of a website published by GitHub Pages, Netlify or
 Cloudflare Pages. Only published versions leave the server, never drafts.
 """
@@ -152,7 +152,7 @@ def _dcat(catalogue: dict, base: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# GitHub: one commit replacing the content of GITHUB_PATH
+# GitHub: one commit replacing the content of GITHUB_FOLDER
 # ---------------------------------------------------------------------------
 
 def _git_blob_sha(data: bytes) -> str:
@@ -165,7 +165,7 @@ def push_github(files: dict[str, bytes], message: str, client: httpx.Client | No
     if not cfg.github_enabled:
         raise ExportError("GitHub is not configured (GITHUB_REPO and GITHUB_TOKEN or GITHUB_TOKEN_FILE).")
     api = f"https://api.github.com/repos/{cfg.github_repo}"
-    prefix = f"{cfg.github_path}/" if cfg.github_path else ""
+    prefix = f"{cfg.github_folder}/" if cfg.github_folder else ""
     own = client is None
     client = client or httpx.Client(timeout=60, headers={
         "Authorization": f"Bearer {cfg.github_token}", "Accept": "application/vnd.github+json",

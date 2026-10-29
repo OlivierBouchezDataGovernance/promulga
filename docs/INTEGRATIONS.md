@@ -47,7 +47,7 @@ re-uploaded). Configure in `.env`:
 ```
 GITHUB_REPO=owner/repository
 GITHUB_BRANCH=main
-GITHUB_PATH=policies
+GITHUB_FOLDER=policies
 EXPORT_SITE_URL=https://www.example.org/policies
 ```
 

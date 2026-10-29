@@ -16,7 +16,8 @@ def app_env(tmp_path, monkeypatch):
     monkeypatch.setenv("ADMIN_EMAIL", "admin@example.org")
     monkeypatch.setenv("ADMIN_PASSWORD", "admin-password-123")
     monkeypatch.setenv("RUN_SCHEDULER", "false")
-    for var in ("DATABASE_URL", "SMTP_HOST", "GOTENBERG_URL", "OIDC_ISSUER", "PORTAL_ALLOWED_IPS", "SECRET_KEY"):
+    for var in ("DATABASE_URL", "SMTP_HOST", "GOTENBERG_URL", "OIDC_ISSUER", "PORTAL_ALLOWED_IPS", "SECRET_KEY",
+                "GITHUB_REPO", "GITHUB_BRANCH", "GITHUB_FOLDER", "GITHUB_TOKEN", "ONLYOFFICE_URL"):
         monkeypatch.delenv(var, raising=False)
     from promulga.config import get_config
     get_config.cache_clear()
