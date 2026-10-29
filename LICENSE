@@ -1,85 +1,32 @@
-Promulga Community License 1.0
+Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)
 
-Copyright (c) 2026 Olivier Bouchez (Olivier Bouchez Data Consulting, Brussels, Belgium)
-Contact: sales@promulga.com
+© 2026 Olivier Bouchez. Content and code licensed under CC BY-NC 4.0:
+free for non-commercial use, with attribution.
 
-1. Definitions
+Unless stated otherwise, Promulga (its source code, Docker images, templates
+and documentation) is licensed under the Creative Commons
+Attribution-NonCommercial 4.0 International License.
 
-   "Software" means Promulga: the source code, Docker images, templates and
-   documentation in this repository, and any part or modified version of them.
+You are free to:
+  - Share: copy and redistribute the material in any medium or format;
+  - Adapt: remix, transform, and build upon the material;
+under the following terms:
+  - Attribution: give appropriate credit to Olivier Bouchez, provide a link to
+    the license, and indicate if changes were made;
+  - NonCommercial: you may not use the material for commercial purposes.
 
-   "Editor" means an active user account of an installation that can take part
-   in the document workflow: contributor (owner, reviewer, approver), manager or
-   administrator. Readers of a portal open without sign-in have no account and
-   are not Editors.
+Commercial use requires prior written permission: sales@promulga.com
 
-   "Organisation" means a legal entity together with the entities it controls,
-   is controlled by, or is under common control with.
+Full legal code: https://creativecommons.org/licenses/by-nc/4.0/legalcode
+Summary:         https://creativecommons.org/licenses/by-nc/4.0/
 
-2. Free use
+Third-party components keep their own licenses:
+  - Inter font: SIL Open Font License 1.1 (promulga/static/fonts/OFL-LICENSE.txt).
+  - Icons derived from Lucide: ISC License (see promulga/icons.py).
+  - Python libraries listed in pyproject.toml: their respective licenses.
+  - Gotenberg, Caddy and OnlyOffice Docs Community Edition run as separate,
+    unmodified containers under their own licenses (Apache 2.0, Apache 2.0,
+    AGPL v3).
 
-   You may use, copy, modify and run the Software, at no cost, for:
-
-   a) any non-commercial purpose (personal use, education, research, non-profit
-      organisations), and
-   b) the internal operations of an Organisation, including a company or a
-      public body, provided that the installations of that Organisation have in
-      total no more than 20 Editors at any time.
-
-   Readers of a public portal (without sign-in) are unlimited.
-
-3. Conditions
-
-   a) Keep this license and the copyright notice in every copy or substantial
-      portion of the Software, and do not remove the attribution "Promulga, by
-      Olivier Bouchez Data Consulting" from the user interface footer.
-   b) If you distribute a modified version, state that you changed it and
-      distribute it under this same license.
-
-4. Uses that need a written permission
-
-   The following uses require a separate, written agreement with the licensor
-   (sales@promulga.com):
-
-   a) more than 20 Editors in one Organisation;
-   b) selling, renting or sublicensing the Software or a modified version;
-   c) providing the Software to third parties as a hosted or managed service
-      (SaaS), or operating it for clients;
-   d) embedding the Software, or a substantial part of it, in a product or a
-      service that is sold.
-
-   Consulting, installation, configuration or training services around an
-   installation owned and operated by the client itself, within the limits of
-   section 2, do not need a permission.
-
-5. Third-party components
-
-   Components distributed with the Software keep their own licenses, for
-   example: the Inter font (SIL Open Font License 1.1, see
-   promulga/static/fonts/OFL-LICENSE.txt), icons derived from Lucide (ISC
-   License, see promulga/icons.py), Python libraries listed in pyproject.toml
-   under their respective licenses. Gotenberg, Caddy and OnlyOffice Docs
-   Community Edition are separate, unmodified programs run as separate
-   containers under their own licenses (Apache 2.0, Apache 2.0 and AGPL v3).
-
-6. No warranty, limitation of liability
-
-   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-   FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT. IN NO EVENT SHALL THE
-   AUTHOR OR COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR ITS USE. You operate and secure
-   your own installation and data. Support is provided on a best-effort basis
-   only, unless agreed otherwise in writing.
-
-7. Termination
-
-   If you breach this license and do not cure the breach within 30 days of a
-   written notice, your rights under this license end. Rights granted to others
-   by you are not affected.
-
-8. Governing law
-
-   This license is governed by Belgian law. The courts of Brussels have
-   exclusive jurisdiction.
+Promulga is provided "as is", without warranty of any kind. Whoever installs
+it operates and secures their own installation and data.

@@ -7,7 +7,7 @@ name = "promulga"
 version = "0.2.0"
 description = "Self-hosted life cycle of governance documents: draft, review, approval, versioned publication, public portal."
 readme = "README.md"
-license = { text = "LicenseRef-Promulga-Community-1.0" }
+license = { text = "CC-BY-NC-4.0" }
 requires-python = ">=3.11"
 authors = [{ name = "Olivier Bouchez" }]
 dependencies = [

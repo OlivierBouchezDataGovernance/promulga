@@ -110,11 +110,9 @@ PAdES signatures, OnlyOffice Docs (optional) for online editing.
 
 ### Status, licence and support
 
-Promulga is free under the [Promulga Community License](LICENSE): for any
-non-commercial use, and inside an organisation with **up to 20 editors**
-(owners, reviewers, approvers, managers, administrators); readers of a public
-portal are unlimited. Larger deployments and commercial use (resale, hosting
-for clients, paid products) need a written agreement: sales@promulga.com.
+© 2026 Olivier Bouchez. Content and code licensed under
+[CC BY-NC 4.0](LICENSE): free for non-commercial use, with attribution.
+Commercial use requires prior written permission: sales@promulga.com.
 
 It is offered **as is**: whoever installs it runs and secures their own
 server, and support is best effort only (support@promulga.com). Installation,
