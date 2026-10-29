@@ -90,6 +90,8 @@ class Config:
     oidc_client_secret: str = ""
     oidc_label: str = "Single sign-on"
     oidc_auto_create_role: str = ""   # '' = only existing users may sign in with SSO
+    oidc_role_claim: str = "groups"   # claim holding the user's groups
+    oidc_role_map: dict = field(default_factory=dict)  # {group: role}; the role is refreshed at each SSO sign-in
     # First administrator
     admin_email: str = ""
     admin_password: str = ""
@@ -188,6 +190,8 @@ def load_config() -> Config:
         oidc_client_secret=s["OIDC_CLIENT_SECRET"],
         oidc_label=env("OIDC_LABEL") or "Single sign-on",
         oidc_auto_create_role=env("OIDC_AUTO_CREATE_ROLE", ""),
+        oidc_role_claim=env("OIDC_ROLE_CLAIM") or "groups",
+        oidc_role_map=parse_role_map(env("OIDC_ROLE_MAP", "")),
         admin_email=env("ADMIN_EMAIL", ""),
         admin_password=s["ADMIN_PASSWORD"],
         export_tag=(env("EXPORT_TAG") or "public").strip().lower(),
@@ -210,3 +214,14 @@ def load_config() -> Config:
 @lru_cache
 def get_config() -> Config:
     return load_config()
+
+
+def parse_role_map(text: str) -> dict:
+    """OIDC_ROLE_MAP="platform-admin=admin, dg-lead=manager, data-consumer=viewer" -> {group: role}."""
+    from .models import ROLES
+    out = {}
+    for item in (text or "").split(","):
+        group, _, role = item.partition("=")
+        if group.strip() and role.strip().lower() in ROLES:
+            out[group.strip()] = role.strip().lower()
+    return out

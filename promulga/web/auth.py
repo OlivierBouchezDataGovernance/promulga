@@ -139,9 +139,19 @@ def _oidc_client():
             server_metadata_url=f"{cfg.oidc_issuer}/.well-known/openid-configuration",
             client_id=cfg.oidc_client_id,
             client_secret=cfg.oidc_client_secret,
-            client_kwargs={"scope": "openid email profile"},
+            client_kwargs={"scope": "openid email profile" + (" groups" if cfg.oidc_role_map else "")},
         )
     return _oauth.sso
+
+
+def role_from_groups(groups, role_map: dict) -> str:
+    """The strongest Promulga role given by the user's groups, '' when none is mapped."""
+    if not role_map or not groups:
+        return ""
+    if isinstance(groups, str):
+        groups = [g.strip() for g in groups.replace(";", ",").split(",")]
+    roles = [role_map[g] for g in groups if g in role_map]
+    return max(roles, key=ROLES.index) if roles else ""
 
 
 @router.get("/oidc/login")
@@ -163,15 +173,24 @@ async def oidc_callback(request: Request, db: Session = Depends(get_db)):
     except Exception as exc:  # the provider refused, or the user cancelled
         flash(request, f"Single sign-on failed: {exc}", "error")
         return redirect("/auth/login")
-    info = token.get("userinfo") or {}
+    info = dict(token.get("userinfo") or {})
+    try:   # some providers (Authelia) give the e-mail and groups only at the userinfo endpoint
+        info.update(await _oidc_client().userinfo(token=token))
+    except Exception:
+        pass
     email = (info.get("email") or "").strip().lower()
     if not email or info.get("email_verified") is False:
         flash(request, "Your identity provider did not give a verified e-mail address.", "error")
         return redirect("/auth/login")
     user = db.query(User).filter_by(email=email).first()
-    if user is None and cfg.oidc_auto_create_role in ROLES:
-        user = User(email=email, name=info.get("name", "")[:200], role=cfg.oidc_auto_create_role)
+    mapped = role_from_groups(info.get(cfg.oidc_role_claim), cfg.oidc_role_map)
+    if user is None and (mapped or cfg.oidc_auto_create_role in ROLES):
+        user = User(email=email, name=str(info.get("name", ""))[:200], role=mapped or cfg.oidc_auto_create_role,
+                    active=True)
         db.add(user)
+    if user is not None and mapped and user.role != mapped:
+        # The identity provider is the reference for roles when OIDC_ROLE_MAP is set.
+        user.role = mapped
     if user is None or not user.active:
         flash(request, f"No active account for {email}. Ask an administrator to invite you.", "error")
         return redirect("/auth/login")

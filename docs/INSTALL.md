@@ -201,6 +201,7 @@ change: `docker compose up -d`.
 | `PUBLIC_HOST`, `ADMIN_HOST` | two separate sites, e.g. `docs.example.org` (portal) and `admin.example.org` (workspace); list both in `SITE_DOMAIN`, separated by a comma |
 | `PORTAL_ALLOWED_IPS` | restrict the portal to networks, e.g. `10.0.0.0/8` (intranet). The workspace stays reachable |
 | `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_LABEL`, `OIDC_AUTO_CREATE_ROLE` | single sign-on with an OpenID Connect provider; redirect URI `BASE_URL/auth/oidc/callback` |
+| `OIDC_ROLE_CLAIM`, `OIDC_ROLE_MAP` | roles from the provider's groups, e.g. `OIDC_ROLE_MAP=platform-admin=admin, dg-lead=manager, data-consumer=viewer`; refreshed at each sign-in |
 | `DATABASE_URL` | PostgreSQL instead of SQLite (`postgresql+psycopg://user:pass@host/db`) |
 | `MAX_UPLOAD_MB` | upload limit (default 25) |
 
@@ -214,6 +215,8 @@ types, template, stage durations, reminders – is set in **Admin > Settings**.
 - *Google*: OAuth client of type "Web application";
   `OIDC_ISSUER=https://accounts.google.com`.
 - *Keycloak*: `OIDC_ISSUER=https://<keycloak>/realms/<realm>`.
+- *Authelia* (with LLDAP as directory): `OIDC_ISSUER=https://auth.example.org`, client with scopes
+  `openid email profile groups`, `token_endpoint_auth_method: client_secret_basic`.
 
 People must exist in Promulga (invited) unless `OIDC_AUTO_CREATE_ROLE` is set
 (e.g. `viewer`). Matching is done on the e-mail address.

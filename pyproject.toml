@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "promulga"
-version = "0.3.0"
+version = "0.3.1"
 description = "Self-hosted life cycle of governance documents: draft, review, approval, versioned publication, public portal."
 readme = "README.md"
 license = { text = "CC-BY-NC-4.0" }

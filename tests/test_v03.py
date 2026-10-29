@@ -153,3 +153,40 @@ def test_settings_page_shows_templates_by_type_and_copyright(client):
     page = client.get("/admin/settings")
     assert page.status_code == 200
     assert 'name="type_template_for"' in page.text and 'name="cover_copyright"' in page.text
+
+
+def test_oidc_groups_give_the_promulga_role(client, monkeypatch):
+    from promulga.config import get_config, parse_role_map
+    from promulga.web import auth
+    role_map = parse_role_map("platform-admin=admin, dg-lead=manager, data-steward=contributor, "
+                              "data-consumer=viewer, bad=superuser")
+    assert role_map == {"platform-admin": "admin", "dg-lead": "manager", "data-steward": "contributor",
+                        "data-consumer": "viewer"}
+    assert auth.role_from_groups(["data-consumer", "dg-lead"], role_map) == "manager"
+    assert auth.role_from_groups(["other"], role_map) == ""
+
+    monkeypatch.setenv("OIDC_ISSUER", "https://auth.example.org")
+    monkeypatch.setenv("OIDC_CLIENT_ID", "promulga")
+    monkeypatch.setenv("OIDC_ROLE_MAP", "platform-admin=admin, data-steward=contributor, data-consumer=viewer")
+    get_config.cache_clear()
+    groups = {"value": ["data-steward"]}
+
+    class FakeClient:
+        async def authorize_access_token(self, request):
+            return {"userinfo": {"sub": "u1"}}
+
+        async def userinfo(self, token):
+            return {"email": "steward@example.org", "email_verified": True, "name": "Steward",
+                    "groups": groups["value"]}
+
+    monkeypatch.setattr(auth, "_oidc_client", lambda: FakeClient())
+    r = client.get("/auth/oidc/callback", follow_redirects=True)
+    import re as _re
+    assert not _re.search(r'class="flash[^"]*error', r.text), _re.findall(r'class="flash[^>]*>(.*?)<', r.text)
+    from promulga import db as database
+    with database.session_scope() as db:
+        assert db.query(User).filter_by(email="steward@example.org").one().role == "contributor"
+    groups["value"] = ["data-consumer"]                     # the provider is the reference
+    client.get("/auth/oidc/callback", follow_redirects=False)
+    with database.session_scope() as db:
+        assert db.query(User).filter_by(email="steward@example.org").one().role == "viewer"
