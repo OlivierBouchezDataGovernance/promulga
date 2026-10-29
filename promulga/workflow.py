@@ -165,8 +165,14 @@ def create_document(db: Session, actor: User, *, title: str, doc_type: str, summ
     db.add(doc)
     doc.terms = db.query(Term).filter(Term.id.in_(term_ids or [0])).all()
     doc.ref = naming.build_ref(doc, prefix)
-    _require(db.query(Document).filter(Document.ref == doc.ref, Document.number != number).count() == 0,
-             f"The reference {doc.ref} already exists: check REF_PATTERN, it must contain {{ID}}.")
+    # References made by Promulga 0.1 were numbered per type (POL-0007 may exist): skip used ones.
+    for _ in range(1000):
+        if db.query(Document).filter(Document.ref == doc.ref, Document.id != doc.id).count() == 0:
+            break
+        doc.number += 1
+        doc.ref = naming.build_ref(doc, prefix)
+    else:
+        raise WorkflowError(f"No free reference for {prefix}: check REF_PATTERN, it must contain {{ID}}.")
     _set_assignments(db, doc, reviewer_emails, approver_emails, actor, site)
     db.flush()
     db.refresh(doc)

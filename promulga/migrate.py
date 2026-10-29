@@ -29,12 +29,25 @@ def _config(connection) -> AlembicConfig:
 
 def upgrade(engine) -> None:
     logging.getLogger("alembic").setLevel(logging.WARNING)
-    with engine.begin() as connection:
-        tables = set(inspect(connection).get_table_names())
-        cfg = _config(connection)
-        if "documents" in tables and "alembic_version" not in tables:
-            command.stamp(cfg, BASELINE)
-        command.upgrade(cfg, "head")
+    with engine.connect() as connection:
+        sqlite = connection.dialect.name == "sqlite"
+        if sqlite:
+            # SQLite rebuilds tables to alter them ("batch" mode): foreign keys must be
+            # off meanwhile, and this pragma only works outside a transaction.
+            connection.exec_driver_sql("PRAGMA foreign_keys=OFF")
+            connection.commit()
+        with connection.begin():
+            tables = set(inspect(connection).get_table_names())
+            cfg = _config(connection)
+            if "documents" in tables and "alembic_version" not in tables:
+                command.stamp(cfg, BASELINE)
+            command.upgrade(cfg, "head")
+        if sqlite:
+            problems = connection.exec_driver_sql("PRAGMA foreign_key_check").fetchall()
+            if problems:
+                raise RuntimeError(f"Foreign key problems after migration: {problems[:5]}")
+            connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+            connection.commit()
 
 
 def new_revision(engine, message: str) -> None:

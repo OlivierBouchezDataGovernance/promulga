@@ -242,7 +242,9 @@ def test_migration_from_v01_database(tmp_path):
         c.execute(text("INSERT INTO documents (id, ref, title, summary, doc_type, status, owner_id, stage_started_at, "
                        "current_version, next_version, created_at, updated_at) VALUES (7, 'POL-0001', 't', '', "
                        "'Policy', 'Draft', 1, '2026-01-01', '', '1.0', '2026-01-01', '2026-01-01')"))
-    migrate.upgrade(engine)
+        c.execute(text("INSERT INTO assignments (document_id, user_id, role) VALUES (7, 1, 'approver')"))
+    from promulga import db as database
+    engine = database.init_engine(str(engine.url))           # with PRAGMA foreign_keys=ON, as in production
     with engine.connect() as c:
         assert c.execute(text("SELECT number FROM documents WHERE id = 7")).scalar() == 1
         assert "stage_log" in inspect(c).get_table_names()
