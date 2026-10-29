@@ -42,6 +42,10 @@ Create one or more taxonomies – for example **Domain**, **Regulation**,
 **Audience** – and their tags. Tags can be nested ("Data quality" under "Data
 governance"): the portal shows a document under its tag and under every parent.
 
+Give the tags of the "Domain" taxonomy a **code** (e.g. `DG` for Data
+governance): it can be used in file names. Create a tag **Public** (e.g. in a
+"Visibility" taxonomy): documents carrying it go to the public export.
+
 ## 5. Invite people – *Users*
 
 | Role | Can |
@@ -78,6 +82,25 @@ Every step is in the document's **History** and in the global **Audit log**
 and who the workflow is waiting for (CSV export).
 
 ---
+
+## 8. Governance features
+
+- **Change note**: a new revision asks what it will change; it appears in the
+  version history of the cover page and of the portal.
+- **Compare versions**: on the document page, *Compare versions* shows the
+  paragraphs added and removed between two revisions.
+- **Periodic review**: every published document gets a next review date
+  (default 12 months, per document in *Edit*); the owner is warned 30 days
+  before, managers see it in the daily summary and in *Indicators*.
+- **Read & acknowledge**: tick *Readers must acknowledge* on a document; at
+  publication every account is asked to confirm on the portal; follow the rate
+  and remind the missing people from the document page (CSV export).
+- **Deputies**: in *My account*, set an absence and a deputy; the deputy
+  receives the requests and can review or approve on your behalf (audit log).
+- **Segregation of duties**: a warning if the owner is also approver or reviewer.
+- **Indicators**: on-time rate and average duration per stage, cycle time,
+  overdue stages, reviews due, acknowledgment rates.
+- **Export**, **API**, **Security**: see [INTEGRATIONS.md](INTEGRATIONS.md) and *Admin > Security*.
 
 ## 15-minute demo scenario
 

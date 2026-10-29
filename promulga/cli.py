@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import os
 import sqlite3
 import sys
 import tarfile
@@ -49,6 +50,7 @@ def main(argv: list[str] | None = None) -> int:
     rev = sub.add_parser("db-revision")
     rev.add_argument("message")
     args = parser.parse_args(argv)
+    _drop_root()
 
     if args.command == "serve":
         import uvicorn
@@ -111,6 +113,21 @@ def main(argv: list[str] | None = None) -> int:
         from . import migrate
         migrate.new_revision(database.get_engine(), args.message)
     return 0
+
+
+def _drop_root() -> None:
+    """'docker compose exec app promulga ...' runs as root: switch to the app user, so that the
+    files it creates (database journal, backups, signing key) stay readable by the web server."""
+    if not hasattr(os, "geteuid") or os.geteuid() != 0:
+        return
+    try:
+        import pwd
+        entry = pwd.getpwnam("promulga")
+    except (ImportError, KeyError):
+        return
+    os.setgid(entry.pw_gid)
+    os.setuid(entry.pw_uid)
+    os.environ["HOME"] = entry.pw_dir
 
 
 BACKUP_ITEMS = ["files", "assets", "signing", "secret_key"]

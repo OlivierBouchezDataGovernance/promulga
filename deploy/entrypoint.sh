@@ -23,6 +23,8 @@ if [ "$(id -u)" = "0" ]; then
     done
   fi
   chown "$APP_USER:$APP_USER" /data
+  # Files created by an earlier root command must stay writable by the web server.
+  find /data -xdev ! -user "$APP_USER" -exec chown "$APP_USER:$APP_USER" {} + 2>/dev/null || true
   exec setpriv --reuid="$APP_USER" --regid="$APP_USER" --init-groups "$@"
 fi
 exec "$@"

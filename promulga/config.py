@@ -43,6 +43,9 @@ def _read_secret(name: str, warnings: list[str], used_env: list[str]) -> str:
     path = os.environ.get(f"{name}_FILE")
     if path:
         p = Path(path)
+        private_copy = Path("/dev/shm/promulga-secrets") / p.name   # made by deploy/entrypoint.sh
+        if private_copy.is_file() and os.access(private_copy, os.R_OK):
+            p = private_copy
         if not p.is_file():
             warnings.append(f"{name}_FILE points to a missing file ({path}).")
             return ""

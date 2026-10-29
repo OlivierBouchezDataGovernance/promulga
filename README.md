@@ -47,19 +47,41 @@ Two web sites in one small application:
 - **E-mails** to the person who must act, with links; without an SMTP server
   everything is readable in the *Outbox* (handy for demos).
 
+New in 0.2:
+
+- **One shared version, online.** Optional OnlyOffice editor (the closest to
+  Word): reviewers comment and suggest changes in the same file.
+- **Metadata inside the Word file.** Automatic cover page with version
+  history, variables `{{TITLE}}`, `{{VERSION}}`... refreshed at every step,
+  file names built from tags (`{CODE:domain}-{TYPE_CODE}-{VERSION}-...`),
+  global unique document number `{ID}`.
+- **Governance.** Mandatory change note, version comparison, segregation of
+  duties warning, periodic review with reminders, deputies during absences,
+  read & acknowledge with tracking, indicators (on-time rate, cycle time...).
+- **Publication to your web site.** Static package of the documents tagged
+  `public` (index, PDFs, DCAT-AP / JSON / CSV catalogues, checksums), pushed to
+  GitHub in one commit; optional electronic seal (PAdES) of the PDFs.
+- **Integrations.** Read-only REST API with tokens, webhooks (Teams, Slack).
+- **Safer operations.** Automatic database migrations, `promulga backup`,
+  secrets as files, first-run password link, security checks page.
+
 ### Run it
 
 ```bash
-cp .env.example .env
+./deploy/setup.sh
 ```
 
 ```bash
 docker compose up -d --build
 ```
 
+Add `--profile editor` to the second command for the online editor.
+
 - [docs/INSTALL.md](docs/INSTALL.md) – installation on any Linux server, with a step-by-step guide for a **Google Cloud** VM.
 - [docs/INSTALL-WSL.md](docs/INSTALL-WSL.md) – a local test on a Windows laptop with Ubuntu WSL.
 - [docs/QUICKSTART.md](docs/QUICKSTART.md) – first steps after installation, and a 15-minute demo scenario.
+- [docs/WORD-TEMPLATES.md](docs/WORD-TEMPLATES.md) – cover page, Word variables, file names.
+- [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) – online editor, GitHub export, API, webhooks, electronic seal.
 - [docs/BRAND.md](docs/BRAND.md) – visual identity: logo, colours, stage colours, typography, icons.
 
 For development without Docker:
@@ -81,7 +103,8 @@ promulga serve
 Python 3.12, FastAPI, SQLAlchemy (SQLite by default, PostgreSQL optional),
 Jinja2 templates (no JavaScript framework), APScheduler for reminders,
 Gotenberg (LibreOffice) for PDF conversion, pypdf/ReportLab for stamping,
-Caddy for automatic HTTPS. One `docker compose up`, three containers.
+Caddy for automatic HTTPS, Alembic migrations, lxml for Word files, pyHanko for
+PAdES signatures, OnlyOffice Docs (optional) for online editing.
 
 ### Status, licence and support
 
@@ -91,9 +114,11 @@ server. There is **no support, no warranty and no service level** – only
 best-effort answers to issues when time allows. Review it, test it, and get a
 security review before trusting it with sensitive documents.
 
-Known limits of version 0.1: no in-browser editing (check-out / check-in
-only), no database migrations yet (back up before upgrading), passkeys not yet
-supported (use SSO for strong authentication), single application process.
+Known limits of version 0.2: the interface is in English (texts are marked
+for translation), passkeys are not supported yet (use SSO for strong
+authentication), a single application process, the cover page and variables
+need .docx files, the online editor is limited to 20 simultaneous editors
+(OnlyOffice Community).
 
 ### Repository layout
 

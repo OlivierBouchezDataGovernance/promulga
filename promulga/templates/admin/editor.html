@@ -6,7 +6,13 @@
   <title>{{ doc.ref }} - online editor - {{ site.site_name }}</title>
   <link rel="stylesheet" href="/static/promulga.css?v={{ app_version }}">
   <link rel="stylesheet" href="/theme.css">
-  <style> html, body { height: 100%; } body { display: flex; flex-direction: column; } #editor-wrap { flex: 1; } </style>
+  <style>
+    html, body { height: 100%; margin: 0; overflow: hidden; }
+    body { display: flex; flex-direction: column; min-height: 0; }
+    .navbar { position: static; flex: 0 0 auto; }
+    #editor-wrap { flex: 1 1 auto; position: relative; min-height: 0; }
+    #editor-wrap > div, #editor-wrap > iframe { position: absolute; inset: 0; width: 100% !important; height: 100% !important; border: 0; }
+  </style>
 </head>
 <body>
   <nav class="navbar" aria-label="Editor">

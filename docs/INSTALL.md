@@ -105,20 +105,29 @@ mkdir -p promulga && tar xzf promulga.tar.gz -C promulga && cd promulga
 ### A5. Configure
 
 ```bash
-cp .env.example .env && nano .env
+./deploy/setup.sh && nano .env
 ```
 
-Change at least:
+`setup.sh` creates `.env` (mode 600) and the `secrets/` folder: one file per
+secret (SMTP password, GitHub token, SSO client secret, OnlyOffice key,
+certificate password), readable by you only. **Passwords never go in `.env`.**
+
+In `.env`, change at least:
 
 | Variable | Example |
 |---|---|
 | `SITE_DOMAIN` | `promulga.your-domain.com` |
 | `BASE_URL` | `https://promulga.your-domain.com` |
-| `SECRET_KEY` | the output of `openssl rand -base64 48` |
-| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | your address and a long temporary password |
+| `ADMIN_EMAIL` | your address (leave `ADMIN_PASSWORD` empty) |
 
 Save with Ctrl+O, Enter, and quit with Ctrl+X. Leave `SMTP_*` empty for a demo:
-e-mails then appear in *Admin > Outbox* instead of being sent.
+e-mails then appear in *Admin > Outbox* instead of being sent. For e-mail,
+fill `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_FROM` in `.env` and the
+password alone in `secrets/smtp_password`. Check the result:
+
+```bash
+./deploy/check.sh
+```
 
 ### A6. Start
 
@@ -132,10 +141,23 @@ The first build takes a few minutes. Follow the start-up:
 docker compose logs -f app caddy
 ```
 
-When Caddy reports a certificate for your domain, open
-`https://promulga.your-domain.com`, click **Sign in** and use `ADMIN_EMAIL` /
-`ADMIN_PASSWORD`. Change the password in *My account*, then remove
-`ADMIN_PASSWORD` from `.env`.
+At the first start the application creates the administrator and prints a
+**one-time link** (valid 24 h) to choose the password:
+
+```bash
+docker compose logs app | grep set-password
+```
+
+Open it once Caddy has its certificate. If you preferred to set
+`ADMIN_PASSWORD`, Promulga makes you change it at the first sign-in; then
+remove it from `.env`. *Admin > Security* lists what remains to fix.
+
+With the online editor (about 2 GB of RAM more), set `ONLYOFFICE_URL=/onlyoffice`
+in `.env` and start with:
+
+```bash
+docker compose --profile editor up -d --build
+```
 
 ### A7. Optional: demo content
 
@@ -166,11 +188,16 @@ change: `docker compose up -d`.
 |---|---|
 | `SITE_DOMAIN` | host name(s) Caddy serves with HTTPS; `:80` for plain HTTP tests (then also `SECURE_COOKIES=false`) |
 | `BASE_URL` | public URL used in e-mail links |
-| `SECRET_KEY` | signs session cookies; keep it secret and stable |
+| `SECRET_KEY` | not needed: a random key is generated and kept in the data volume |
+| `REF_PATTERN`, `FILENAME_PATTERN` | document references and file names, see [WORD-TEMPLATES.md](WORD-TEMPLATES.md) |
+| `EXPORT_TAG`, `GITHUB_*`, `EXPORT_SITE_URL` | public export, see [INTEGRATIONS.md](INTEGRATIONS.md) |
+| `SIGN_PDFS`, `SIGNING_CERT_FILE` | electronic seal of published PDFs |
+| `ONLYOFFICE_URL` | `/onlyoffice` to enable the online editor (profile `editor`) |
+| `HTTP_PORT`, `HTTPS_PORT` | ports published by Caddy |
 | `SECURE_COOKIES` | `true` in production (HTTPS) |
 | `TZ` | time zone of deadlines and reminders |
-| `ADMIN_EMAIL`, `ADMIN_PASSWORD` | first administrator, created only if there is no administrator yet |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_STARTTLS`, `SMTP_SSL` | outgoing e-mail. Google Cloud blocks port 25: use 587 or 465 |
+| `ADMIN_EMAIL`, `ADMIN_PASSWORD` | first administrator, created only if there is no administrator yet (one-time link in the logs; a password set here must be changed at first sign-in) |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_FROM`, `SMTP_STARTTLS`, `SMTP_SSL` | outgoing e-mail (password in `secrets/smtp_password`). Google Cloud blocks port 25: use 587 or 465 |
 | `PUBLIC_HOST`, `ADMIN_HOST` | two separate sites, e.g. `docs.example.org` (portal) and `admin.example.org` (workspace); list both in `SITE_DOMAIN`, separated by a comma |
 | `PORTAL_ALLOWED_IPS` | restrict the portal to networks, e.g. `10.0.0.0/8` (intranet). The workspace stays reachable |
 | `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_LABEL`, `OIDC_AUTO_CREATE_ROLE` | single sign-on with an OpenID Connect provider; redirect URI `BASE_URL/auth/oidc/callback` |
@@ -202,25 +229,39 @@ for the sender domain as the provider explains, or messages may end in spam.
 **Update to a new version**
 
 ```bash
-cd ~/promulga && git pull && docker compose up -d --build
+cd ~/promulga && docker compose exec app promulga backup && git pull && docker compose up -d --build
 ```
 
-(Or copy a new archive as in A4.) Back up first: version 0.x has no automatic
-database migrations.
+The database schema is migrated automatically at start-up (also from 0.1).
+Run `./deploy/setup.sh` again after an update: it adds any new secret file.
 
-**Back up** the data volume to a dated archive in the current folder:
+**Back up**: `promulga backup` writes a consistent archive of the database and
+all files in the data volume (`/data/backups`); copy it off the server:
 
 ```bash
-docker run --rm -v promulga_promulga-data:/data -v "$PWD":/backup alpine tar czf /backup/promulga-$(date +%F).tar.gz -C / data
+docker compose exec app promulga backup
 ```
 
-The volume name is `<folder>_promulga-data`; list volumes with `docker volume ls`.
-Copy the archive off the server, or schedule **disk snapshots** in Google Cloud
-(*Compute Engine > Snapshots > Create snapshot schedule*).
+```bash
+docker compose cp app:/data/backups ./backups
+```
 
-**Restore**: stop the app (`docker compose stop app`), extract the archive into
-the volume with the same `docker run ... alpine tar xzf ...` command, then
-`docker compose start app`.
+Schedule it (cron on the host, e.g. every night) and add **disk snapshots** in
+Google Cloud (*Compute Engine > Snapshots > Create snapshot schedule*). The
+date of the last backup is shown in *Admin > Security*.
+
+**Restore**: copy the archive into the container, stop the web server and
+restore (this replaces the current data):
+
+```bash
+docker compose cp promulga-backup-20261105-020000.tar.gz app:/data/
+```
+
+```bash
+docker compose stop app && docker compose run --rm app promulga restore /data/promulga-backup-20261105-020000.tar.gz --yes
+```
+
+Then `docker compose up -d`.
 
 **Logs**
 
@@ -237,4 +278,8 @@ docker compose exec app promulga create-admin you@example.org
 It prints a one-time link to choose a new password.
 
 **Commands inside the container:** `promulga reminders` (queue today's
-reminders now), `promulga flush-outbox` (send pending e-mails), `promulga demo-data`.
+reminders now), `promulga flush-outbox` (send pending e-mails), `promulga demo-data`,
+`promulga backup`, `promulga export [--github]`.
+
+Integrations (online editor, GitHub export, API, webhooks, electronic seal):
+see [INTEGRATIONS.md](INTEGRATIONS.md).

@@ -52,7 +52,7 @@ cd ~/promulga && git pull
 ## 3. Configure for local use
 
 ```bash
-cp .env.example .env && nano .env
+./deploy/setup.sh && nano .env
 ```
 
 Set these values (leave the others as they are):
@@ -62,7 +62,7 @@ SITE_DOMAIN=:80
 BASE_URL=http://localhost
 SECURE_COOKIES=false
 ADMIN_EMAIL=you@example.org
-ADMIN_PASSWORD=a-long-local-password
+ONLYOFFICE_URL=/onlyoffice
 ```
 
 `SITE_DOMAIN=:80` tells Caddy to serve plain HTTP without asking for a
@@ -72,18 +72,25 @@ with Ctrl+O, Enter, quit with Ctrl+X.
 ## 4. Start
 
 ```bash
-docker compose up -d --build
+docker compose --profile editor up -d --build
 ```
 
-The first build downloads the images and takes a few minutes. Check that the
-three containers are up (`app` must say *healthy* after ~30 seconds):
+The first build downloads the images (the online editor is about 3 GB) and
+takes a few minutes. Without the online editor, drop `--profile editor` and
+`ONLYOFFICE_URL`. Check that the containers are up (`app` must say *healthy*
+after ~30 seconds):
 
 ```bash
 docker compose ps
 ```
 
 Open **http://localhost** in your Windows browser (WSL 2 forwards the port
-automatically). Click *Sign in* with `ADMIN_EMAIL` / `ADMIN_PASSWORD`.
+automatically). Choose the administrator password with the one-time link of
+the logs:
+
+```bash
+docker compose logs app | grep set-password
+```
 
 ## 5. Load the demo content
 
@@ -101,15 +108,14 @@ browser window to play the reviewer, the owner and the approver.
 |---|---|
 | Stop (data kept) | `docker compose down` |
 | Start again | `docker compose up -d` |
-| Rebuild after `git pull` | `docker compose up -d --build` |
+| Update | `docker compose exec app promulga backup && git pull && docker compose --profile editor up -d --build` |
 | Follow the logs | `docker compose logs -f app` |
 | **Erase everything** (database and files) | `docker compose down -v` |
 
 ## Port 80 already used?
 
-Use port 8080 instead: in `docker-compose.yml`, under `caddy > ports`, replace
-`"80:80"` by `"8080:80"`, set `BASE_URL=http://localhost:8080` in `.env`, run
-`docker compose up -d` and open http://localhost:8080.
+Use port 8080 instead: set `HTTP_PORT=8080` and `BASE_URL=http://localhost:8080`
+in `.env`, run `docker compose up -d` and open http://localhost:8080.
 
 ## Next: a real server
 
