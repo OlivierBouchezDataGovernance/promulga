@@ -127,7 +127,8 @@ def security_checks(db: Session) -> list[dict]:
     https = cfg.base_url.startswith("https://")
     add(https, "HTTPS", "BASE_URL uses https." if https else "BASE_URL is not https: fine for a local test only.")
     add(cfg.secure_cookies or not https, "Secure cookies",
-        "Session cookies are sent over HTTPS only." if cfg.secure_cookies else "SECURE_COOKIES=false.")
+        "Session cookies are sent over HTTPS only." if cfg.secure_cookies
+        else ("SECURE_COOKIES=false: set it to true with HTTPS." if https else "Not applicable over plain HTTP."))
     admins_temp = db.query(User).filter(User.role == ROLE_ADMIN, User.must_change_password.is_(True)).count()
     add(admins_temp == 0, "Administrator password",
         "No administrator uses a temporary password." if not admins_temp
