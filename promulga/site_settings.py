@@ -44,6 +44,8 @@ DEFAULTS: dict[str, Any] = {
         {"name": "Reference", "prefix": "REF", "icon": "library"},
     ],
     "template_asset": "",           # optional .docx copied as first revision of new documents
+    "type_templates": {},           # {document type name: asset}: template of that type (wins over template_asset)
+    "cover_copyright": "© {YEAR} {SITE}. All rights reserved.",  # cover page line; {YEAR} and {SITE} are replaced
     # Deadlines and alerts ----------------------------------------------------
     "stage_days": {DRAFT: 28, REVIEW: 14, REVISION: 14, APPROVAL: 14},
     "reminder_before_days": 3,      # 0 = no "due soon" reminder

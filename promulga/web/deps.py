@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from .. import __version__, i18n, icons, site_settings
 from ..config import get_config
 from ..db import get_db
-from ..models import ROLE_ADMIN, ROLE_MANAGER, User
+from ..models import CLASSIFICATIONS, ROLE_ADMIN, ROLE_MANAGER, User
 from ..security import csrf_token, csrf_valid
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
@@ -165,5 +165,6 @@ def render(request: Request, db: Session, template: str, user: User | None = Non
     return templates.TemplateResponse(request, template, {
         "site": site, "user": user, "csrf": csrf_token(request.session), "messages": messages,
         "oidc_enabled": cfg.oidc_enabled, "oidc_label": cfg.oidc_label, "smtp_enabled": cfg.smtp_enabled,
+        "classifications": CLASSIFICATIONS,
         **context,
     }, status_code=status_code)

@@ -7,6 +7,9 @@ Retired documents disappear from the portal.
 Access is public by default; the administrator can require a login (any
 account, including the 'viewer' role), and the server can restrict the portal
 to intranet addresses (PORTAL_ALLOWED_IPS).
+
+Documents classified "Limited distribution" or "Confidential" are shown only
+to signed-in participants of the document and to Document Managers.
 """
 
 from __future__ import annotations
@@ -37,11 +40,13 @@ def portal_user(request: Request, db: Session = Depends(get_db),
 # Queries
 # ---------------------------------------------------------------------------
 
-def visible_documents(db: Session) -> list[Document]:
-    return (db.query(Document)
-            .options(selectinload(Document.terms), selectinload(Document.publications), selectinload(Document.owner))
+def visible_documents(db: Session, user: User | None) -> list[Document]:
+    docs = (db.query(Document)
+            .options(selectinload(Document.terms), selectinload(Document.publications), selectinload(Document.owner),
+                     selectinload(Document.assignments))
             .filter(Document.current_version != "", Document.status != RETIRED)
             .order_by(Document.ref).all())
+    return [d for d in docs if d.readable_by(user)]
 
 
 def term_tree(taxonomy: Taxonomy) -> tuple[dict[int | None, list[Term]], dict[int, Term]]:
@@ -86,11 +91,13 @@ def _count_by_term(docs: list[Document], children, term_ids) -> dict[int, int]:
 
 @router.get("/")
 def home(request: Request, db: Session = Depends(get_db), user: User | None = Depends(portal_user)):
-    docs = visible_documents(db)
+    docs = visible_documents(db, user)
     taxonomies = db.query(Taxonomy).order_by(Taxonomy.sort, Taxonomy.name).all()
-    latest = (db.query(Publication).join(Document)
-              .filter(Document.status != RETIRED)
-              .order_by(Publication.published_at.desc(), Publication.id.desc()).limit(6).all())
+    readable = {d.id for d in docs}
+    latest = [p for p in (db.query(Publication).join(Document)
+                          .filter(Document.status != RETIRED)
+                          .order_by(Publication.published_at.desc(), Publication.id.desc()).limit(60).all())
+              if p.document_id in readable][:6]
     cards = []
     for tax in taxonomies:
         children, _ = term_tree(tax)
@@ -112,7 +119,7 @@ def browse_taxonomy(slug: str, request: Request, db: Session = Depends(get_db),
     tax = db.query(Taxonomy).filter_by(slug=slug).first()
     if tax is None:
         raise HTTPException(404)
-    docs = visible_documents(db)
+    docs = visible_documents(db, user)
     children, _ = term_tree(tax)
     roots = children.get(None, [])
     untagged = [d for d in docs if not any(t.taxonomy_id == tax.id for t in d.terms)]
@@ -128,7 +135,7 @@ def browse_term(slug: str, term_id: int, request: Request, db: Session = Depends
     term = db.get(Term, term_id)
     if tax is None or term is None or term.taxonomy_id != tax.id:
         raise HTTPException(404)
-    docs = visible_documents(db)
+    docs = visible_documents(db, user)
     children, by_id = term_tree(tax)
     scope = descendants(children, term.id)
     sub = children.get(term.id, [])
@@ -141,7 +148,7 @@ def browse_term(slug: str, term_id: int, request: Request, db: Session = Depends
 @router.get("/search")
 def search(request: Request, q: str = "", type: str = "", db: Session = Depends(get_db),
            user: User | None = Depends(portal_user)):
-    docs = visible_documents(db)
+    docs = visible_documents(db, user)
     words = [w for w in q.lower().split() if w]
     results = []
     for d in docs:
@@ -167,6 +174,10 @@ def document_page(ref: str, request: Request, db: Session = Depends(get_db),
     doc = db.query(Document).filter_by(ref=ref).first()
     if doc is None or not doc.current_version:
         raise HTTPException(404)
+    if not doc.readable_by(user):
+        if user is None:
+            raise LoginRequired(f"/d/{ref}")
+        raise HTTPException(404)
     acknowledged = None
     if doc.ack_required and user and doc.latest_publication:
         acknowledged = db.query(Acknowledgment).filter_by(publication_id=doc.latest_publication.id,
@@ -181,7 +192,7 @@ def acknowledge(ref: str, request: Request, db: Session = Depends(get_db),
     if user is None:
         raise LoginRequired(f"/d/{ref}")
     doc = db.query(Document).filter_by(ref=ref).first()
-    if doc is None:
+    if doc is None or not doc.readable_by(user):
         raise HTTPException(404)
     try:
         workflow.acknowledge(db, user, doc)
@@ -198,6 +209,10 @@ def document_pdf(ref: str, version: str, download: bool = False, db: Session = D
                  user: User | None = Depends(portal_user)):
     doc = db.query(Document).filter_by(ref=ref).first()
     if doc is None or doc.status == RETIRED:
+        raise HTTPException(404)
+    if not doc.readable_by(user):
+        if user is None:
+            raise LoginRequired(f"/d/{ref}/v{version}.pdf")
         raise HTTPException(404)
     pub = next((p for p in doc.publications if p.version == version), None)
     if pub is None:

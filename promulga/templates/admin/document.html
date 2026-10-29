@@ -223,6 +223,7 @@
     {% if doc.summary %}<p class="small">{{ doc.summary }}</p>{% endif %}
     <p>{% for t in doc.terms %}<span class="tag">{{ t.taxonomy.name }}: {{ t.name }}</span>{% else %}<span class="muted small">No tags.</span>{% endfor %}</p>
     <p class="small muted">ID {{ doc.id_label }} - created {{ doc.created_at | fdate }} UTC.<br>
+      Classification: <strong>{{ doc.classification_label }}</strong>{% if doc.keywords %} · Keywords: {{ doc.keywords }}{% endif %}.<br>
       Periodic review: every {{ doc.review_months if doc.review_months is not none else site.review_months }} month(s){{ ' (none)' if (doc.review_months if doc.review_months is not none else site.review_months) == 0 }}.
       {% if doc.ack_required %}<br>Readers must acknowledge each version.{% endif %}</p>
   </div>

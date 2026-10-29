@@ -35,6 +35,8 @@
     <table>
       <tr><th>Version in force</th><td>{{ doc.current_version }}</td></tr>
       <tr><th>Published</th><td>{{ doc.published_at | fdate }}</td></tr>
+      <tr><th>Classification</th><td>{{ doc.classification_label }}</td></tr>
+      {% if doc.keywords %}<tr><th>Keywords</th><td>{{ doc.keywords }}</td></tr>{% endif %}
       {% if site.portal_show_owner %}<tr><th>Owner</th><td>{{ doc.owner.display }}</td></tr>{% endif %}
       {% if pub and pub.approved_by %}<tr><th>Approved by</th><td>{{ pub.approved_by }}</td></tr>{% endif %}
     </table>

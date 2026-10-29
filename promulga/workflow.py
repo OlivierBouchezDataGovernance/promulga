@@ -36,7 +36,7 @@ from . import docx_meta, mailer, naming, pdf, site_settings, storage
 from .accounts import participant
 from .config import get_config
 from .models import (
-    ACTIVE_STATUSES, APPROVAL, APPROVER, DRAFT, PUBLISHED, RETIRED, REVIEW, REVIEWER, REVISION,
+    ACTIVE_STATUSES, APPROVAL, APPROVER, CLASSIFICATIONS, DRAFT, PUBLISHED, RETIRED, REVIEW, REVIEWER, REVISION,
     ROLE_MANAGER, Acknowledgment, Assignment, Comment, Document, Event, Publication, Revision, StageLog, Term,
     User, WebhookDelivery, utcnow,
 )
@@ -148,20 +148,23 @@ def _require_manager(actor: User) -> None:
 def create_document(db: Session, actor: User, *, title: str, doc_type: str, summary: str, owner_email: str,
                     reviewer_emails: list[str], approver_emails: list[str], term_ids: list[int],
                     file: tuple[str, bytes] | None, review_months: int | None = None,
-                    ack_required: bool = False) -> Document:
+                    ack_required: bool = False, classification: str = "internal",
+                    keywords: str = "", readers: list[str] | None = None) -> Document:
     _require_manager(actor)
     site = site_settings.get_all(db)
     title = (title or "").strip()
     _require(bool(title), "The title is required.")
     _require(len(approver_emails) > 0, "At least one approver is required.")
     prefix = site_settings.doc_type_prefix(site, doc_type)
+    _require(classification in CLASSIFICATIONS, "Unknown classification.")
 
     owner = participant(db, owner_email, actor, site)
     number = (db.query(func.max(Document.number)).scalar() or 0) + 1
     doc = Document(number=number, ref=f"tmp-{number}", title=title, summary=(summary or "").strip(),
                    doc_type=doc_type, owner=owner, status=DRAFT, next_version="1.0",
                    change_note="Initial version", stage_due=_due(site, DRAFT), stage_started_at=utcnow(),
-                   review_months=review_months, ack_required=ack_required)
+                   review_months=review_months, ack_required=ack_required, classification=classification,
+                   keywords=_clean_keywords(keywords), readers=", ".join(readers or []))
     db.add(doc)
     doc.terms = db.query(Term).filter(Term.id.in_(term_ids or [0])).all()
     doc.ref = naming.build_ref(doc, prefix)
@@ -177,12 +180,14 @@ def create_document(db: Session, actor: User, *, title: str, doc_type: str, summ
     db.flush()
     db.refresh(doc)
 
-    if file is None and site.get("template_asset"):
-        path = storage.asset_path(site["template_asset"])
+    template = (site.get("type_templates") or {}).get(doc_type) or site.get("template_asset")
+    if file is None and template:
+        path = storage.asset_path(template)
         if path:
             file = (f"template{path.suffix}", path.read_bytes())
     if file is None:   # no file, no template: a blank Word document with its cover page
-        file = ("document.docx", docx_meta.new_template(naming.values(doc, site=site), naming.LABELS))
+        file = ("document.docx", docx_meta.new_template(naming.values(doc, site=site), naming.LABELS,
+                                                        logo=cover_logo(site)))
     _store_revision(db, actor, doc, file[0], file[1], "Initial file")
 
     _log(db, doc, actor, "Created", "", DRAFT)
@@ -192,7 +197,9 @@ def create_document(db: Session, actor: User, *, title: str, doc_type: str, summ
 
 
 def update_metadata(db: Session, actor: User, doc: Document, *, title: str, summary: str,
-                    term_ids: list[int], review_months: int | None = None, ack_required: bool | None = None) -> None:
+                    term_ids: list[int], review_months: int | None = None, ack_required: bool | None = None,
+                    classification: str | None = None, keywords: str | None = None,
+                    readers: list[str] | None = None) -> None:
     _require_manager(actor)
     title = (title or "").strip()
     _require(bool(title), "The title is required.")
@@ -203,6 +210,15 @@ def update_metadata(db: Session, actor: User, doc: Document, *, title: str, summ
     doc.review_months = review_months
     if ack_required is not None:
         doc.ack_required = ack_required
+    if classification is not None:
+        _require(classification in CLASSIFICATIONS, "Unknown classification.")
+        if classification != doc.classification:
+            before += f", classification {doc.classification_label}"
+        doc.classification = classification
+    if keywords is not None:
+        doc.keywords = _clean_keywords(keywords)
+    if readers is not None:
+        doc.readers = ", ".join(readers)
     _log(db, doc, actor, "Metadata changed", doc.status, doc.status, f"Before: {before}")
 
 
@@ -327,7 +343,27 @@ def refresh_docx(db: Session, doc: Document, data: bytes, version: str | None = 
     vals = naming.values(doc, version, site, published)
     if published:
         vals["STATUS"] = PUBLISHED
-    return docx_meta.update_docx(data, vals, naming.LABELS, history_rows(doc, upcoming))
+    return docx_meta.update_docx(data, vals, naming.LABELS, history_rows(doc, upcoming),
+                                 approvals=approval_rows(doc), logo=cover_logo(site))
+
+
+def approval_rows(doc: Document) -> list[dict[str, str]]:
+    """The approvers of the version in preparation (or just published), for {{APPROVALS}}."""
+    return [{"role": "Approver", "name": a.user.display, "decision": "Approved" if a.acted_at else "Pending",
+             "date": a.acted_at.date().isoformat() if a.acted_at else ""} for a in doc.approvers]
+
+
+def cover_logo(site: dict) -> tuple[bytes, str] | None:
+    """The site logo for cover pages, when it is a PNG or JPEG (Word cannot show SVG reliably)."""
+    path = storage.asset_path(site.get("logo_asset") or "")
+    if path is None or path.suffix.lower() not in (".png", ".jpg", ".jpeg"):
+        return None
+    return path.read_bytes(), path.suffix.lower()
+
+
+def _clean_keywords(text: str) -> str:
+    words = [w.strip() for w in (text or "").replace(";", ",").split(",") if w.strip()]
+    return ", ".join(dict.fromkeys(words))[:500]
 
 
 def _content_type(filename: str) -> str:
@@ -516,7 +552,8 @@ def _publish(db: Session, doc: Document, actor: User, site: dict) -> Publication
         else:
             vals = naming.values(doc, version, site, today)
             vals["STATUS"] = PUBLISHED
-            raw_pdf = pdf.prepend(pdf.cover_pdf(vals, naming.LABELS, history_rows(doc, upcoming)),
+            raw_pdf = pdf.prepend(pdf.cover_pdf(vals, naming.LABELS, history_rows(doc, upcoming),
+                                                logo=cover_logo(site)),
                                   pdf.to_pdf(source.filename, data))
     except pdf.ConversionError as exc:
         raise WorkflowError(f"Publication failed: {exc} Your approval was not recorded; try again later "
@@ -560,9 +597,13 @@ def _add_months(d: date, months: int) -> date:
 # Read & acknowledge
 # ---------------------------------------------------------------------------
 
-def acknowledgment_audience(db: Session) -> list[User]:
-    """Everybody with an active account is expected to acknowledge."""
-    return db.query(User).filter(User.active.is_(True)).order_by(User.email).all()
+def acknowledgment_audience(db: Session, doc: Document | None = None) -> list[User]:
+    """The mandatory readers of `doc` chosen by its Data Owner, else everybody with an active account."""
+    query = db.query(User).filter(User.active.is_(True))
+    emails = [e.strip().lower() for e in (doc.readers if doc is not None else "").split(",") if e.strip()]
+    if emails:
+        query = query.filter(User.email.in_(emails))
+    return query.order_by(User.email).all()
 
 
 def acknowledge(db: Session, user: User, doc: Document) -> None:
@@ -577,7 +618,7 @@ def acknowledge(db: Session, user: User, doc: Document) -> None:
 
 def acknowledgment_status(db: Session, doc: Document) -> dict:
     pub = doc.latest_publication
-    audience = acknowledgment_audience(db)
+    audience = acknowledgment_audience(db, doc)
     if pub is None:
         return {"publication": None, "done": [], "missing": audience, "rate": 0}
     done_ids = {a.user_id: a for a in db.query(Acknowledgment).filter_by(publication_id=pub.id).all()}
@@ -589,7 +630,7 @@ def acknowledgment_status(db: Session, doc: Document) -> dict:
 
 def _ask_acknowledgments(db: Session, doc: Document, site: dict, only: list[User] | None = None) -> int:
     link = f"{get_config().base_url}/d/{doc.ref}"
-    people = only if only is not None else acknowledgment_audience(db)
+    people = only if only is not None else acknowledgment_audience(db, doc)
     for user in people:
         mailer.queue(db, user.email, f"Please read {doc.ref} version {doc.current_version}", "notice.html", site,
                      heading=f"{doc.ref} - {doc.title}",

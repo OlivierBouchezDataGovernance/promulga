@@ -47,6 +47,20 @@ Two web sites in one small application:
 - **E-mails** to the person who must act, with links; without an SMTP server
   everything is readable in the *Outbox* (handy for demos).
 
+New in 0.3:
+
+- **Classification** of every document: External publication, Commercial
+  publication, Internal publication, Limited distribution, Confidential. It is
+  printed in a coloured band on the cover page and decides who reads the
+  document: limited and confidential documents are shown only to their
+  participants after sign-in, and only external and commercial publications
+  can be exported to a public web site.
+- **Cover page with your logo and copyright line**, keywords and a link to the
+  official version; variables also in page headers and footers; `{{HISTORY}}`
+  and `{{APPROVALS}}` tables anywhere in the document.
+- **A template per document type** (Policy, Standard, Procedure...), and
+  **mandatory readers** chosen per document.
+
 New in 0.2:
 
 - **One shared version, online.** Optional OnlyOffice editor (the closest to

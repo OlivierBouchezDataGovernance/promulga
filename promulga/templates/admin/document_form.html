@@ -22,6 +22,17 @@
     <label for="summary">Summary <span class="hint">(shown on the portal)</span></label>
     <textarea id="summary" name="summary" rows="3" maxlength="2000">{{ form.summary or '' }}</textarea>
 
+    <div class="row">
+      <div><label for="classification">Classification <span class="hint">(printed on the cover page)</span></label>
+        <select id="classification" name="classification">
+          {% for key, label in classifications.items() %}<option value="{{ key }}" {{ 'selected' if (form.classification or 'internal') == key }}>{{ label }}</option>{% endfor %}
+        </select></div>
+      <div><label for="keywords">Keywords <span class="hint">(separated by commas)</span></label>
+        <input id="keywords" type="text" name="keywords" maxlength="500" value="{{ form.keywords or '' }}"></div>
+    </div>
+    <p class="hint">External and commercial publications may be exported to a public web site. Limited distribution
+      and confidential documents are shown on the portal only to their participants and to Document Managers, after sign-in.</p>
+
     <label for="owner">Owner <span class="hint">(one e-mail address)</span></label>
     <input id="owner" type="email" name="owner" value="{{ form.owner or '' }}" list="people" required>
     <label for="reviewers">Reviewers <span class="hint">(e-mails separated by commas; may be empty)</span></label>
@@ -36,6 +47,8 @@
         <input id="review_months" type="number" min="0" max="120" name="review_months" value="{{ form.review_months if form.review_months is not none else '' }}"></div>
       <div><label class="check" style="margin-top:2.2rem"><input type="checkbox" name="ack_required" value="1" {{ 'checked' if form.ack_required }}> Readers must acknowledge each version</label></div>
     </div>
+    <label for="readers">Mandatory readers <span class="hint">(e-mails separated by commas, chosen by the Data Owner; empty = every account)</span></label>
+    <textarea id="readers" name="readers" rows="2">{{ form.readers or '' }}</textarea>
     {% if not doc %}
     <label for="file">Initial file <span class="hint">(optional{% if site.template_asset %}; otherwise the template is used{% endif %})</span></label>
     <input id="file" type="file" name="file">

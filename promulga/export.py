@@ -32,7 +32,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from . import __version__, i18n, icons, naming, site_settings, storage
 from .config import get_config
-from .models import RETIRED, Document
+from .models import PUBLIC_CLASSIFICATIONS, RETIRED, Document
 
 _env = Environment(loader=PackageLoader("promulga", "templates/export"), autoescape=select_autoescape(["html"]))
 i18n.install(_env)
@@ -46,7 +46,10 @@ def exported_documents(db: Session) -> list[Document]:
     tag = get_config().export_tag
     docs = (db.query(Document).options(selectinload(Document.terms), selectinload(Document.publications))
             .filter(Document.current_version != "", Document.status != RETIRED).order_by(Document.ref).all())
-    return [d for d in docs if any(t.slug.lower() == tag or t.name.lower() == tag for t in d.terms)]
+    # The tag selects the documents; the classification is a second lock: only external and
+    # commercial publications may leave the server, whatever their tags.
+    return [d for d in docs if d.classification in PUBLIC_CLASSIFICATIONS
+            and any(t.slug.lower() == tag or t.name.lower() == tag for t in d.terms)]
 
 
 def build(db: Session) -> dict[str, bytes]:

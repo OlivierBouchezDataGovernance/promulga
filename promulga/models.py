@@ -45,6 +45,20 @@ ACTIVE_STATUSES = [DRAFT, REVIEW, REVISION, APPROVAL]
 
 REVIEWER, APPROVER = "reviewer", "approver"
 
+# Classification of a document: printed on its cover page, and decides who may read it.
+#   external / commercial: anyone who can open the portal; may be exported to a public web site
+#   internal:             anyone who can open the portal (restrict the portal if it faces the internet)
+#   limited / confidential: signed-in participants of the document and Document Managers only
+CLASSIFICATIONS = {
+    "external": "External publication",
+    "commercial": "Commercial publication",
+    "internal": "Internal publication",
+    "limited": "Limited distribution",
+    "confidential": "Confidential",
+}
+PUBLIC_CLASSIFICATIONS = ("external", "commercial")
+RESTRICTED_CLASSIFICATIONS = ("limited", "confidential")
+
 
 class User(Base):
     __tablename__ = "users"
@@ -153,6 +167,9 @@ class Document(Base):
     review_months: Mapped[int | None] = mapped_column(Integer, nullable=True)  # None = site default
     next_review: Mapped[date | None] = mapped_column(Date, nullable=True)  # periodic review of the published version
     ack_required: Mapped[bool] = mapped_column(Boolean, default=False)     # readers must acknowledge
+    classification: Mapped[str] = mapped_column(String(20), default="internal")  # key of CLASSIFICATIONS
+    keywords: Mapped[str] = mapped_column(String(500), default="")         # free keywords, comma-separated
+    readers: Mapped[str] = mapped_column(Text, default="")                 # mandatory readers' e-mails; '' = everybody
     checked_out_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     checked_out_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
@@ -189,6 +206,20 @@ class Document(Base):
     @property
     def latest_publication(self) -> Publication | None:
         return self.publications[0] if self.publications else None
+
+    @property
+    def classification_label(self) -> str:
+        return CLASSIFICATIONS.get(self.classification or "internal", CLASSIFICATIONS["internal"])
+
+    def readable_by(self, user: User | None) -> bool:
+        """Whether `user` (None = anonymous portal visitor) may read the published versions."""
+        if (self.classification or "internal") not in RESTRICTED_CLASSIFICATIONS:
+            return True
+        if user is None or not user.active:
+            return False
+        if user.has_role(ROLE_MANAGER) or user.id == self.owner_id:
+            return True
+        return any(a.user_id == user.id for a in self.assignments)
 
     @property
     def is_overdue(self) -> bool:

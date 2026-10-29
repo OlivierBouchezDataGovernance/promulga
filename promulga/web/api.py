@@ -47,6 +47,7 @@ def _doc(d: Document, site: dict, full: bool = False) -> dict:
         "owner": d.owner.email, "reviewers": [a.user.email for a in d.reviewers],
         "approvers": [a.user.email for a in d.approvers],
         "tags": [{"taxonomy": t.taxonomy.slug, "name": t.name, "code": t.code} for t in d.terms],
+        "classification": d.classification, "keywords": [k.strip() for k in d.keywords.split(",") if k.strip()],
         "portal_url": f"{base}/d/{d.ref}" if d.current_version else None,
     }
     if full:

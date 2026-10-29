@@ -156,6 +156,8 @@ async def new_document(request: Request, title: str = Form(""), doc_type: str = 
                        owner: str = Form(""), reviewers: str = Form(""), approvers: str = Form(""),
                        terms: list[str] = Form([]), file: UploadFile | None = File(None),
                        review_months: str = Form(""), ack_required: str = Form(""),
+                       classification: str = Form("internal"), keywords: str = Form(""),
+                       readers: str = Form(""),
                        db: Session = Depends(get_db), user: User = Depends(require_manager)):
     try:
         upload = await _read_upload(file)
@@ -163,7 +165,8 @@ async def new_document(request: Request, title: str = Form(""), doc_type: str = 
             db, user, title=title, doc_type=doc_type, summary=summary, owner_email=owner,
             reviewer_emails=accounts.parse_emails(reviewers), approver_emails=accounts.parse_emails(approvers),
             term_ids=_int_list(terms), file=upload, review_months=_months(review_months),
-            ack_required=ack_required == "1")
+            ack_required=ack_required == "1", classification=classification, keywords=keywords,
+            readers=accounts.parse_emails(readers))
         db.commit()
     except (workflow.WorkflowError, accounts.AccountError, ValueError) as exc:
         db.rollback()
@@ -172,7 +175,8 @@ async def new_document(request: Request, title: str = Form(""), doc_type: str = 
         return render(request, db, "admin/document_form.html", user=user, doc=None, taxonomies=_taxonomies(db),
                       users=users, selected_terms=set(_int_list(terms)), status_code=400,
                       form={"title": title, "doc_type": doc_type, "summary": summary, "owner": owner,
-                            "reviewers": reviewers, "approvers": approvers},
+                            "reviewers": reviewers, "approvers": approvers, "classification": classification,
+                            "keywords": keywords, "readers": readers},
                       messages=request.session.pop("flash", []))
     flash(request, f"{doc.ref} created. The owner received an e-mail.", "success")
     _warn(request, doc, upload[0] if upload else None)
@@ -187,7 +191,8 @@ def edit_document_form(doc_id: int, request: Request, db: Session = Depends(get_
     form = {"title": doc.title, "doc_type": doc.doc_type, "summary": doc.summary, "owner": doc.owner.email,
             "reviewers": ", ".join(a.user.email for a in doc.reviewers),
             "approvers": ", ".join(a.user.email for a in doc.approvers),
-            "review_months": "" if doc.review_months is None else doc.review_months, "ack_required": doc.ack_required}
+            "review_months": "" if doc.review_months is None else doc.review_months, "ack_required": doc.ack_required,
+            "classification": doc.classification, "keywords": doc.keywords, "readers": doc.readers}
     return render(request, db, "admin/document_form.html", user=user, doc=doc, taxonomies=_taxonomies(db),
                   users=users, selected_terms={t.id for t in doc.terms}, form=form)
 
@@ -196,11 +201,14 @@ def edit_document_form(doc_id: int, request: Request, db: Session = Depends(get_
 def edit_document(doc_id: int, request: Request, title: str = Form(""), summary: str = Form(""),
                   owner: str = Form(""), reviewers: str = Form(""), approvers: str = Form(""),
                   terms: list[str] = Form([]), review_months: str = Form(""), ack_required: str = Form(""),
+                  classification: str = Form("internal"), keywords: str = Form(""), readers: str = Form(""),
                   db: Session = Depends(get_db), user: User = Depends(require_manager)):
     doc = _get_doc(db, doc_id, user)
     try:
         workflow.update_metadata(db, user, doc, title=title, summary=summary, term_ids=_int_list(terms),
-                                 review_months=_months(review_months), ack_required=ack_required == "1")
+                                 review_months=_months(review_months), ack_required=ack_required == "1",
+                                 classification=classification, keywords=keywords,
+                                 readers=accounts.parse_emails(readers))
         new_people = (owner.strip().lower(), accounts.parse_emails(reviewers), accounts.parse_emails(approvers))
         old_people = (doc.owner.email, [a.user.email for a in doc.reviewers], [a.user.email for a in doc.approvers])
         if new_people != old_people:
@@ -621,6 +629,8 @@ async def save_workflow(request: Request, draft_days: int = Form(28), review_day
                         notify_on_publish: str = Form(""), doc_types: str = Form(""),
                         review_months: int = Form(12), review_reminder_days: int = Form(30),
                         template: UploadFile | None = File(None), remove_template: str = Form(""),
+                        type_template: UploadFile | None = File(None), type_template_for: str = Form(""),
+                        remove_type_templates: list[str] = Form([]), cover_copyright: str = Form(""),
                         db: Session = Depends(get_db), user: User = Depends(require_admin)):
     types = []
     for line in doc_types.splitlines():
@@ -654,6 +664,20 @@ async def save_workflow(request: Request, draft_days: int = Form(28), review_day
             flash(request, "The template must be a .docx, .doc or .odt file.", "error")
             return redirect("/admin/settings#workflow")
         values["template_asset"] = storage.save_asset(template.filename, await template.read(10 * 1024 * 1024))
+    type_names = {t["name"] for t in types}
+    per_type = {k: v for k, v in (site_settings.get(db, "type_templates") or {}).items()
+                if k in type_names and k not in remove_type_templates}
+    if type_template is not None and type_template.filename:
+        if type_template_for not in type_names:
+            flash(request, "Choose the document type of the template.", "error")
+            return redirect("/admin/settings#workflow")
+        if storage.extension(type_template.filename) not in {".docx", ".odt", ".doc"}:
+            flash(request, "The template must be a .docx, .doc or .odt file.", "error")
+            return redirect("/admin/settings#workflow")
+        per_type[type_template_for] = storage.save_asset(type_template.filename,
+                                                         await type_template.read(10 * 1024 * 1024))
+    values["type_templates"] = per_type
+    values["cover_copyright"] = cover_copyright.strip()[:300]
     site_settings.set_many(db, values)
     workflow.log_admin(db, user, "Workflow settings changed",
                        f"days {days}, before {values['reminder_before_days']}, repeat {values['overdue_repeat_days']}")
@@ -674,8 +698,10 @@ def save_portal(request: Request, portal_access: str = Form("public"), portal_sh
 
 
 @router.get("/settings/template")
-def download_template(db: Session = Depends(get_db), user: User = Depends(require_manager)):
-    path = storage.asset_path(site_settings.get(db, "template_asset"))
+def download_template(type: str = "", db: Session = Depends(get_db), user: User = Depends(require_manager)):
+    name = ((site_settings.get(db, "type_templates") or {}).get(type) if type
+            else site_settings.get(db, "template_asset"))
+    path = storage.asset_path(name or "")
     if path is None:
         raise HTTPException(404)
     return FileResponse(path, filename=f"template{path.suffix}")

@@ -27,11 +27,12 @@ def _user(db, email):
 
 
 def _publish(db, admin, title="Data Quality Policy", owner="owner@example.org", reviewers=(), terms=(),
-             ack=False, review_months=None):
+             ack=False, review_months=None, classification="internal"):
     doc = workflow.create_document(db, admin, title=title, doc_type="Policy", summary="About data quality.",
                                    owner_email=owner, reviewer_emails=list(reviewers),
                                    approver_emails=["app@example.org"], term_ids=list(terms), file=None,
-                                   ack_required=ack, review_months=review_months)
+                                   ack_required=ack, review_months=review_months,
+                                   classification=classification)
     o = _user(db, owner)
     workflow.check_in(db, o, doc, "final.pdf", make_pdf(f"{title} body"))
     workflow.submit(db, o, doc)
@@ -141,8 +142,9 @@ def test_export_package_and_github_push(db):
     public = Term(taxonomy=tax, name="Public", slug="public")
     db.add_all([tax, public])
     db.flush()
-    _publish(db, admin, title="Open Policy", terms=[public.id])
+    _publish(db, admin, title="Open Policy", terms=[public.id], classification="external")
     _publish(db, admin, title="Internal Policy")
+    _publish(db, admin, title="Tagged But Internal", terms=[public.id])   # the classification wins over the tag
     files = export.build(db)
     assert {"index.html", "catalogue.json", "catalogue.csv", "catalogue.jsonld", "SHA256SUMS"} <= set(files)
     catalogue = json.loads(files["catalogue.json"])

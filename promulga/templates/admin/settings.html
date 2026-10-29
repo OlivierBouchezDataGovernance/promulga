@@ -80,11 +80,29 @@
         <div class="icon-grid" aria-label="Available icons">{% for name in icon_names %}<span>{{ icon(name, 16) }} {{ name }}</span>{% endfor %}</div>
         <p class="hint">Renaming a type does not change existing documents.</p>
       </fieldset>
-      <fieldset><legend>Template</legend>
-        <p class="small">{% if site.template_asset %}A template is set: <a href="/admin/settings/template">download it</a>. It becomes the first revision of new documents created without a file.
-          <label class="check"><input type="checkbox" name="remove_template" value="1"> Remove the template</label>
-          {% else %}No template: owners start from their own file.{% endif %}</p>
-        <input type="file" name="template" accept=".docx,.doc,.odt">
+      <fieldset><legend>Templates</legend>
+        <p class="small">A new document created without a file starts from the template of its type, else from the default template.</p>
+        <p class="small"><strong>Default template:</strong> {% if site.template_asset %}<a href="/admin/settings/template">download it</a>
+          <label class="check"><input type="checkbox" name="remove_template" value="1"> Remove the default template</label>
+          {% else %}none (a blank Word document with the cover page is created).{% endif %}</p>
+        <input type="file" name="template" accept=".docx,.doc,.odt" aria-label="Default template">
+        <p class="small" style="margin-top:1rem"><strong>Template by type:</strong></p>
+        {% for t in site.doc_types %}{% if site.type_templates.get(t.name) %}
+          <p class="small">{{ t.name }}: <a href="/admin/settings/template?type={{ t.name | urlencode }}">download</a>
+            <label class="check"><input type="checkbox" name="remove_type_templates" value="{{ t.name }}"> Remove</label></p>
+        {% endif %}{% endfor %}
+        <div class="row">
+          <div><label for="type_template_for">Type</label>
+            <select id="type_template_for" name="type_template_for"><option value="">-</option>
+              {% for t in site.doc_types %}<option value="{{ t.name }}">{{ t.name }}</option>{% endfor %}</select></div>
+          <div><label for="type_template">Template file</label>
+            <input id="type_template" type="file" name="type_template" accept=".docx,.doc,.odt"></div>
+        </div>
+      </fieldset>
+      <fieldset><legend>Cover page</legend>
+        <label for="cover_copyright">Copyright line <span class="hint">({YEAR} and {SITE} are replaced; empty = none)</span></label>
+        <input id="cover_copyright" type="text" name="cover_copyright" maxlength="300" value="{{ site.cover_copyright }}">
+        <p class="hint">The cover page also shows the logo (Appearance; PNG or JPEG) and the classification of the document in a coloured band.</p>
       </fieldset>
       <div class="actions"><button class="btn" type="submit">Save deadlines and alerts</button></div>
     </form>

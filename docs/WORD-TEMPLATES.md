@@ -11,10 +11,28 @@ At the first check-in (and at every later check-in, download and publication)
 Promulga inserts or refreshes a cover page at the very beginning of the
 document, followed by a page break:
 
+- the **classification** in capitals, in a coloured band across the page:
+
+  | Classification | Colour | Who reads the published version |
+  |---|---|---|
+  | EXTERNAL PUBLICATION | green | anyone who can open the portal; may be exported to a public web site |
+  | COMMERCIAL PUBLICATION | blue | same as external (customers and partners) |
+  | INTERNAL PUBLICATION | slate | anyone who can open the portal (restrict the portal if it faces the internet) |
+  | LIMITED DISTRIBUTION | amber | participants of the document and Document Managers, after sign-in |
+  | CONFIDENTIAL | red | participants of the document and Document Managers, after sign-in |
+
+- the **logo** of the site (*Settings > Appearance*; PNG or JPEG, an SVG logo
+  is not used on cover pages);
 - reference and type, title, description;
-- a table: reference, type, domain, version, status, owner, reviewers,
-  approvers, created, last update, published, next review;
-- the **version history**: version, date, author, change note, approved by.
+- a table: reference, type, domain, version, status, classification, owner,
+  reviewers, approvers, created, last update, published, next review,
+  keywords, link to the official version;
+- the **version history**: version, date, author, change note, approved by;
+- the **copyright line** (*Settings > Deadlines and alerts > Cover page*,
+  `{YEAR}` and `{SITE}` are replaced) and what the classification allows.
+
+The classification and the keywords are set when the document is created
+or edited.
 
 The cover page is one *locked content control* named "Promulga cover page":
 Word and OnlyOffice show it as a block that cannot be edited. Changes made to
@@ -36,6 +54,17 @@ Anywhere in a template or a document, write a tag between double braces:
 | `{{STATUS}}` | workflow stage |
 | `{{AUTHOR}}` / `{{REVIEWERS}}` / `{{APPROVERS}}` | participants |
 | `{{CREATED}}` / `{{UPDATED}}` / `{{PUBLISHED}}` / `{{NEXT_REVIEW}}` | dates (yyyy-mm-dd) |
+| `{{CLASSIFICATION}}` | Internal publication, Confidential... |
+| `{{KEYWORDS}}` | keywords of the document |
+| `{{LINK}}` | address of the official version on the portal |
+| `{{CHANGE_NOTE}}` | what the version in preparation changes |
+| `{{COPYRIGHT}}` / `{{YEAR}}` | copyright line of the cover page / current year |
+
+Two **tables** are available too: write `{{HISTORY}}` or `{{APPROVALS}}`
+alone in a paragraph, and Promulga replaces it by the version history, or by
+the approvers of the version with their decision and its date.
+
+Variables also work in **page headers and footers**.
 
 At the first check-in each tag becomes a Word **content control** (tag
 `promulga:TITLE`, ...). From then on Promulga rewrites its content, so the
@@ -45,6 +74,13 @@ Plain text content control > Properties > Tag `promulga:VERSION`).
 
 Tip: put `{{REF}} v{{FULL_VERSION}} - {{STATUS}}` in the page header of the
 template.
+
+## A template per document type
+
+*Settings > Deadlines and alerts > Templates*: upload one .docx per document
+type (Policy, Standard...). A new document created without a file starts
+from the template of its type, else from the default template, else from a
+blank Word document with the cover page.
 
 ## File names
 
