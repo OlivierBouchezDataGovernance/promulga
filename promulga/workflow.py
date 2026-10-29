@@ -553,7 +553,7 @@ def _publish(db: Session, doc: Document, actor: User, site: dict) -> Publication
             vals = naming.values(doc, version, site, today)
             vals["STATUS"] = PUBLISHED
             raw_pdf = pdf.prepend(pdf.cover_pdf(vals, naming.LABELS, history_rows(doc, upcoming),
-                                                logo=cover_logo(site)),
+                                                logo=cover_logo(site), approvals=approval_rows(doc)),
                                   pdf.to_pdf(source.filename, data))
     except pdf.ConversionError as exc:
         raise WorkflowError(f"Publication failed: {exc} Your approval was not recorded; try again later "

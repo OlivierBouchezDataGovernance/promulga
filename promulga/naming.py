@@ -38,7 +38,7 @@ LABELS = [
     ("STATUS", "Status"), ("CLASSIFICATION", "Classification"), ("AUTHOR", "Owner"),
     ("REVIEWERS", "Reviewers"), ("APPROVERS", "Approvers"), ("CREATED", "Created"),
     ("UPDATED", "Last update"), ("PUBLISHED", "Published"), ("NEXT_REVIEW", "Next review"),
-    ("KEYWORDS", "Keywords"), ("LINK", "Official version"),
+    ("KEYWORDS", "Keywords"), ("READERS", "Mandatory readers"), ("LINK", "Official version"),
 ]
 
 
@@ -83,6 +83,7 @@ def values(doc: Document, version: str | None = None, site: dict | None = None,
         "CLASSIFICATION_CODE": doc.classification or "internal",
         "KEYWORDS": doc.keywords or "",
         "CHANGE_NOTE": doc.change_note or "",
+        "READERS": doc.readers or ("Every account" if doc.ack_required else "None"),
         "LINK": f"{get_config().base_url.rstrip('/')}/d/{doc.ref}" if doc.ref else "",
     }
     copyright_pattern = (site or {}).get("cover_copyright", "")

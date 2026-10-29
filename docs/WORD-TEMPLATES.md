@@ -8,8 +8,11 @@ PDF still receives a generated cover page).
 ## The cover page
 
 At the first check-in (and at every later check-in, download and publication)
-Promulga inserts or refreshes a cover page at the very beginning of the
-document, followed by a page break:
+Promulga inserts or refreshes two pages at the very beginning of the document:
+the **title page** (classification band, logo, type, title, description,
+reference, version, status, date, owner, copyright) and the **document control**
+page (all metadata, version history, approvals of the version, mandatory
+readers). The details:
 
 - the **classification** in capitals, in a coloured band across the page:
 

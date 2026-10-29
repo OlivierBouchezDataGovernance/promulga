@@ -74,9 +74,10 @@ def test_publication_of_pdf_gets_cover_page_and_history(db):
     doc = _publish(db, admin)
     pdf = storage.read_bytes(doc.latest_publication.pdf_path)
     reader = PdfReader(io.BytesIO(pdf))
-    assert len(reader.pages) == 2                                # generated cover + the document
-    cover = reader.pages[0].extract_text()
-    assert "Data Quality Policy" in cover and "Version history" in cover and "Initial version" in cover
+    assert len(reader.pages) == 3                    # title page + document control page + the document
+    title, control = reader.pages[0].extract_text(), reader.pages[1].extract_text()
+    assert "Data Quality Policy" in title and "DOCUMENT CONTROL" in control
+    assert "Version history" in control and "Initial version" in control and "Approvals" in control
 
 
 def test_word_cover_and_variables_on_check_in(db):

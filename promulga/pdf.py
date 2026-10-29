@@ -104,21 +104,31 @@ def extract_text(pdf_bytes: bytes, max_chars: int = 200_000) -> str:
 # ---------------------------------------------------------------------------
 
 def cover_pdf(vals: dict[str, str], labels: list[tuple[str, str]], history: list[dict[str, str]],
-              logo: tuple[bytes, str] | None = None) -> bytes:
-    """A one-page A4 cover with the same content as the Word cover page."""
+              logo: tuple[bytes, str] | None = None, approvals: list[dict[str, str]] | None = None) -> bytes:
+    """The title page and the document control page, as in Word, for formats without a cover page."""
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.utils import ImageReader
-    from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    from reportlab.platypus import Image, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
     from xml.sax.saxutils import escape
 
-    from .docx_meta import CLASSIFICATION_COLORS, CLASSIFICATION_NOTES
+    from .docx_meta import CLASSIFICATION_COLORS, CLASSIFICATION_NOTES, TITLE_PAGE_KEYS
 
     slate, muted, line = colors.HexColor("#1E293B"), colors.HexColor("#64748B"), colors.HexColor("#CBD5E1")
+    gold = colors.HexColor("#8A6A22")
     styles = getSampleStyleSheet()
     small = ParagraphStyle("small", parent=styles["BodyText"], fontSize=8.5, leading=11)
-    buffer = io.BytesIO()
+    h2 = ParagraphStyle("h", parent=styles["Heading2"], textColor=slate)
+
+    def grid(rows, widths, header):
+        t = Table([[Paragraph(escape(str(c)), small) for c in r] for r in rows], colWidths=widths,
+                  repeatRows=1 if header else 0)
+        style = [("GRID", (0, 0), (-1, -1), 0.5, line), ("VALIGN", (0, 0), (-1, -1), "TOP")]
+        style.append(("BACKGROUND", (0, 0), (-1, 0) if header else (0, -1), colors.HexColor("#F1F5F9")))
+        t.setStyle(TableStyle(style))
+        return t
+
     story = []
     code = vals.get("CLASSIFICATION_CODE") or "internal"
     if vals.get("CLASSIFICATION"):
@@ -135,40 +145,45 @@ def cover_pdf(vals: dict[str, str], labels: list[tuple[str, str]], history: list
             scale = min(170 / width, 57 / height)
             image = Image(io.BytesIO(logo[0]), width=width * scale, height=height * scale)
             image.hAlign = "LEFT"
-            story += [image, Spacer(1, 22)]
+            story.append(image)
         except Exception:  # a broken logo must not block a publication
             pass
-    story += [
-        Paragraph(escape(f"{vals.get('REF', '')}  ·  {vals.get('TYPE', '')}".upper()),
-                  ParagraphStyle("eyebrow", parent=styles["BodyText"], textColor=muted, fontSize=9)),
-        Spacer(1, 6),
-        Paragraph(escape(vals.get("TITLE", "")), ParagraphStyle("t", parent=styles["Title"], alignment=0,
-                                                                 textColor=slate, fontSize=24, leading=29)),
-    ]
+    story += [Spacer(1, 110),
+              Paragraph(escape(vals.get("TYPE", "").upper()), ParagraphStyle(
+                  "eyebrow", parent=styles["BodyText"], textColor=gold, fontName="Helvetica-Bold", fontSize=11)),
+              Spacer(1, 8),
+              Paragraph(escape(vals.get("TITLE", "")), ParagraphStyle(
+                  "t", parent=styles["Title"], alignment=0, textColor=slate, fontSize=30, leading=36)),
+              Spacer(1, 10)]
     if vals.get("DESCRIPTION"):
-        story += [Paragraph(escape(vals["DESCRIPTION"]), styles["BodyText"]), Spacer(1, 10)]
-    meta = Table([[Paragraph(f"<b>{escape(label)}</b>", small), Paragraph(escape(vals.get(key, "") or "-"), small)]
-                  for key, label in labels], colWidths=[120, 330])
-    meta.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.5, line),
-                              ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#F1F5F9")),
-                              ("VALIGN", (0, 0), (-1, -1), "TOP")]))
-    rows = [["Version", "Date", "Author", "Changes", "Approved by"]]
-    rows += [[h.get("version", ""), h.get("date", ""), h.get("author", ""), h.get("note", ""),
-              h.get("approved_by", "")] for h in history] or [["-", "-", "-", "Not published yet", "-"]]
-    hist = Table([[Paragraph(escape(str(c)), small) for c in r] for r in rows], colWidths=[50, 65, 90, 165, 80],
-                 repeatRows=1)
-    hist.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.5, line),
-                              ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F1F5F9")),
-                              ("VALIGN", (0, 0), (-1, -1), "TOP")]))
-    story += [meta, Spacer(1, 16),
-              Paragraph("Version history", ParagraphStyle("h", parent=styles["Heading2"], textColor=slate)),
-              hist, Spacer(1, 14)]
+        story += [Paragraph(escape(vals["DESCRIPTION"]), ParagraphStyle(
+            "d", parent=styles["BodyText"], textColor=muted, fontSize=13, leading=18)), Spacer(1, 30)]
+    story += [grid([[label, vals.get(key, "") or "-"] for key, label in TITLE_PAGE_KEYS], [110, 340], False),
+              Spacer(1, 110)]
     if vals.get("COPYRIGHT"):
         story.append(Paragraph(escape(vals["COPYRIGHT"]), ParagraphStyle("c", parent=small, textColor=slate)))
     if vals.get("CLASSIFICATION"):
         story.append(Paragraph(escape(f"{vals['CLASSIFICATION']}: {CLASSIFICATION_NOTES.get(code, '')}"),
                                ParagraphStyle("cn", parent=small, textColor=muted)))
-    story.append(Paragraph("Cover page generated by Promulga.", ParagraphStyle("n", parent=small, textColor=muted)))
+    story.append(PageBreak())
+
+    rows = [["Version", "Date", "Author", "Changes", "Approved by"]]
+    rows += [[h.get("version", ""), h.get("date", ""), h.get("author", ""), h.get("note", ""),
+              h.get("approved_by", "")] for h in history] or [["-", "-", "-", "Not published yet", "-"]]
+    appr = [["Role", "Name", "Decision", "Date"]]
+    appr += [[a.get("role", ""), a.get("name", ""), a.get("decision", ""), a.get("date", "")]
+             for a in approvals or []] or [["Approver", "-", "Pending", "-"]]
+    story += [Paragraph("DOCUMENT CONTROL", ParagraphStyle("e2", parent=styles["BodyText"], textColor=gold,
+                                                           fontName="Helvetica-Bold", fontSize=9)),
+              Paragraph(escape(vals.get("TITLE", "")), ParagraphStyle("t2", parent=styles["Heading1"],
+                                                                      textColor=slate)),
+              grid([[label, vals.get(key, "") or "-"] for key, label in labels], [120, 330], False),
+              Spacer(1, 14), Paragraph("Version history", h2), grid(rows, [50, 65, 90, 165, 80], True),
+              Spacer(1, 14), Paragraph("Approvals of this version", h2), grid(appr, [90, 170, 90, 100], True),
+              Spacer(1, 14),
+              Paragraph("These two pages are generated by Promulga.", ParagraphStyle("n", parent=small,
+                                                                                    textColor=muted))]
+    buffer = io.BytesIO()
     SimpleDocTemplate(buffer, pagesize=A4, title=vals.get("TITLE", ""), leftMargin=60, rightMargin=60,
                       topMargin=60, bottomMargin=60).build(story)
     return buffer.getvalue()
