@@ -15,6 +15,12 @@
       <div class="seal">{{ icon("shield-check", 30) }}<div><strong>Official version {{ pub.version }}</strong>
         <span>In force since {{ pub.published_at | fdate }}{% if pub.approved_by %} - approved by {{ pub.approved_by }}{% endif %}</span></div></div>
       {% if doc.summary %}<p>{{ doc.summary }}</p>{% endif %}
+      {% if doc.ack_required %}
+        {% if acknowledged %}<p class="done small">{{ icon("clipboard-check", 16) }} You acknowledged version {{ pub.version }} on {{ acknowledged.acknowledged_at | fdate }} (UTC).</p>
+        {% elif user %}<form method="post" action="/d/{{ doc.ref }}/acknowledge" class="notice"><input type="hidden" name="csrf" value="{{ csrf }}">
+          Please read version {{ pub.version }}, then confirm: <button class="btn btn-sm btn-green" type="submit">I have read and understood</button></form>
+        {% else %}<p class="notice small">Reading this document must be acknowledged: <a href="/auth/login?next=/d/{{ doc.ref }}">sign in</a> to confirm you read it.</p>{% endif %}
+      {% endif %}
       <div class="actions">
         <a class="btn" href="/d/{{ doc.ref }}/v{{ pub.version }}.pdf" target="_blank" rel="noopener">Read version {{ pub.version }} (PDF)</a>
         <a class="btn btn-outline" href="/d/{{ doc.ref }}/v{{ pub.version }}.pdf?download=1">Download</a>

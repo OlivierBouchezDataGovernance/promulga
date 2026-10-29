@@ -4,12 +4,12 @@
   <div class="navbar-inner">
     <a class="brand" href="/admin">
       <img src="{{ '/assets/' ~ site.logo_asset if site.logo_asset else '/static/promulga-mark.svg' }}" alt="">
-      <span>{{ site.site_name }}</span> <span class="badge-env">Workspace</span>
+      <span>{{ site.site_name }}</span> <span class="badge-env">{{ _("Workspace") }}</span>
     </a>
     <div class="nav-links">
-      <a href="/" title="Public portal">Portal</a>
+      <a href="/" title="Public portal">{{ _("Portal") }}</a>
       <a href="/admin/account">{{ user.display }}</a>
-      <form method="post" action="/auth/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="linklike" type="submit">Sign out</button></form>
+      <form method="post" action="/auth/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="linklike" type="submit">{{ _("Sign out") }}</button></form>
     </div>
   </div>
 </nav>
@@ -17,17 +17,21 @@
   <div class="navbar-inner">
     <div class="nav-links">
       {% set path = request.url.path %}
-      <a href="/admin" class="{{ 'active' if path == '/admin' }}">My tasks</a>
-      <a href="/admin/documents" class="{{ 'active' if path.startswith('/admin/documents') and path != '/admin/documents/new' }}">Register</a>
+      <a href="/admin" class="{{ 'active' if path == '/admin' }}">{{ _("My tasks") }}</a>
+      <a href="/admin/documents" class="{{ 'active' if path.startswith('/admin/documents') and path != '/admin/documents/new' }}">{{ _("Register") }}</a>
       {% if user.has_role('manager') %}
-        <a href="/admin/documents/new" class="{{ 'active' if path == '/admin/documents/new' }}">+ New document</a>
-        <a href="/admin/taxonomies" class="{{ 'active' if path.startswith('/admin/taxonomies') }}">Tags</a>
-        <a href="/admin/audit" class="{{ 'active' if path.startswith('/admin/audit') }}">Audit log</a>
+        <a href="/admin/documents/new" class="{{ 'active' if path == '/admin/documents/new' }}">{{ _("+ New document") }}</a>
+        <a href="/admin/taxonomies" class="{{ 'active' if path.startswith('/admin/taxonomies') }}">{{ _("Tags") }}</a>
+        <a href="/admin/indicators" class="{{ 'active' if path.startswith('/admin/indicators') }}">{{ _("Indicators") }}</a>
+        <a href="/admin/audit" class="{{ 'active' if path.startswith('/admin/audit') }}">{{ _("Audit log") }}</a>
       {% endif %}
       {% if user.has_role('admin') %}
-        <a href="/admin/users" class="{{ 'active' if path.startswith('/admin/users') }}">Users</a>
-        <a href="/admin/settings" class="{{ 'active' if path.startswith('/admin/settings') }}">Settings</a>
-        <a href="/admin/outbox" class="{{ 'active' if path.startswith('/admin/outbox') }}">Outbox</a>
+        <a href="/admin/users" class="{{ 'active' if path.startswith('/admin/users') }}">{{ _("Users") }}</a>
+        <a href="/admin/settings" class="{{ 'active' if path.startswith('/admin/settings') }}">{{ _("Settings") }}</a>
+        <a href="/admin/outbox" class="{{ 'active' if path.startswith('/admin/outbox') }}">{{ _("Outbox") }}</a>
+        <a href="/admin/export" class="{{ 'active' if path.startswith('/admin/export') }}">{{ _("Export") }}</a>
+        <a href="/admin/api-tokens" class="{{ 'active' if path.startswith('/admin/api-tokens') }}">{{ _("API") }}</a>
+        <a href="/admin/security" class="{{ 'active' if path.startswith('/admin/security') }}">{{ _("Security") }}</a>
       {% endif %}
     </div>
   </div>

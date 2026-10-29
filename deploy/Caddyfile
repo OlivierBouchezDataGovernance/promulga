@@ -7,7 +7,19 @@
 	request_body {
 		max_size 50MB
 	}
-	reverse_proxy app:8000
+
+	# Online editor (profile "editor"): OnlyOffice served under /onlyoffice.
+	handle_path /onlyoffice/* {
+		reverse_proxy onlyoffice:80 {
+			header_up X-Forwarded-Host {host}/onlyoffice
+			header_up X-Forwarded-Proto {scheme}
+		}
+	}
+
+	handle {
+		reverse_proxy app:8000
+	}
+
 	header {
 		Strict-Transport-Security "max-age=31536000"
 		-Server

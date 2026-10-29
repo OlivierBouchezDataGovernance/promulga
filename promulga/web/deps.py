@@ -13,7 +13,7 @@ from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 from sqlalchemy.orm import Session
 
-from .. import __version__, icons, site_settings
+from .. import __version__, i18n, icons, site_settings
 from ..config import get_config
 from ..db import get_db
 from ..models import ROLE_ADMIN, ROLE_MANAGER, User
@@ -53,6 +53,7 @@ def _filesize(n: int) -> str:
     return str(n)
 
 
+i18n.install(templates.env)
 templates.env.filters["fdate"] = _fmt_date
 templates.env.filters["filesize"] = _filesize
 templates.env.filters["safe_html"] = lambda html: Markup(sanitize_html(html))
@@ -69,6 +70,10 @@ templates.env.globals["type_icon"] = lambda site, doc_type, size=20: icons.svg(
 class LoginRequired(Exception):
     def __init__(self, next_url: str):
         self.next_url = next_url
+
+
+class MustChangePassword(Exception):
+    """The user signed in with a temporary password and must change it first."""
 
 
 class Forbidden(Exception):
@@ -101,6 +106,8 @@ def login_session(request: Request, user: User) -> None:
 def require_user(request: Request, user: User | None = Depends(current_user)) -> User:
     if user is None:
         raise LoginRequired(request.url.path + (f"?{request.url.query}" if request.url.query else ""))
+    if user.must_change_password and request.url.path != "/admin/account":
+        raise MustChangePassword()
     return user
 
 

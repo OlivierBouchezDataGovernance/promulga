@@ -1,4 +1,4 @@
-{% macro status(s) %}<span class="status status-{{ s }}">{{ s }}</span>{% endmacro %}
+{% macro status(s) %}<span class="status status-{{ s }}">{{ _(s) }}</span>{% endmacro %}
 
 {% macro due(doc) %}
   {% if doc.stage_due %}<span class="{{ 'late' if doc.is_overdue }}">{{ doc.stage_due | fdate }}{% if doc.is_overdue %} (overdue){% endif %}</span>{% else %}-{% endif %}

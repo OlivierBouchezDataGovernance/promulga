@@ -20,5 +20,16 @@
     </fieldset>
     <div class="actions"><button class="btn" type="submit">Save</button></div>
   </form>
+  <form class="card" method="post" action="/admin/account/absence">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <h2>Absence and deputy</h2>
+    <p class="small muted">While you are absent, your deputy receives your review and approval requests and can act on your behalf (the audit log says so).</p>
+    <label for="deputy">Deputy</label>
+    <select id="deputy" name="deputy_id"><option value="">(none)</option>
+      {% for p in people %}<option value="{{ p.id }}" {{ 'selected' if user.deputy_id == p.id }}>{{ p.display }} ({{ p.email }})</option>{% endfor %}</select>
+    <label for="until">Absent until <span class="hint">(empty = present)</span></label>
+    <input id="until" type="date" name="absent_until" value="{{ user.absent_until or '' }}">
+    <div class="actions"><button class="btn btn-outline" type="submit">Save absence</button></div>
+  </form>
 </div></section>
 {% endblock %}

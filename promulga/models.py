@@ -10,6 +10,8 @@ Vocabulary
 - *Assignment*: a reviewer or approver of a document, with the moment they
   acted in the current round (reset when a new round starts).
 - *Event*: one line of the audit log. Never updated nor deleted.
+- *StageLog*: when each stage started, was due and ended (for the indicators).
+- *Acknowledgment*: "I have read and understood" for one published version.
 """
 
 from __future__ import annotations
@@ -54,12 +56,21 @@ class User(Base):
     password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     oidc_subject: Mapped[str | None] = mapped_column(String(255), nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
+    deputy_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    absent_until: Mapped[date | None] = mapped_column(Date, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    deputy: Mapped[User | None] = relationship(remote_side="User.id")
 
     @property
     def display(self) -> str:
         return self.name or self.email
+
+    @property
+    def is_absent(self) -> bool:
+        return self.absent_until is not None and self.absent_until >= date.today()
 
     def has_role(self, role: str) -> bool:
         return self.active and ROLES.index(self.role) >= ROLES.index(role)
@@ -114,6 +125,7 @@ class Term(Base):
     parent_id: Mapped[int | None] = mapped_column(ForeignKey("terms.id", ondelete="SET NULL"), nullable=True)
     name: Mapped[str] = mapped_column(String(150))
     slug: Mapped[str] = mapped_column(String(150))
+    code: Mapped[str] = mapped_column(String(20), default="")      # short code for file names, e.g. "DG"
     description: Mapped[str] = mapped_column(Text, default="")
     sort: Mapped[int] = mapped_column(Integer, default=0)
 
@@ -125,7 +137,8 @@ class Document(Base):
     __tablename__ = "documents"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    ref: Mapped[str] = mapped_column(String(30), unique=True, index=True)
+    number: Mapped[int] = mapped_column(Integer, unique=True)          # global document number: {ID}
+    ref: Mapped[str] = mapped_column(String(60), unique=True, index=True)
     title: Mapped[str] = mapped_column(String(300))
     summary: Mapped[str] = mapped_column(Text, default="")
     doc_type: Mapped[str] = mapped_column(String(50))
@@ -136,6 +149,10 @@ class Document(Base):
     current_version: Mapped[str] = mapped_column(String(20), default="")   # last published version
     next_version: Mapped[str] = mapped_column(String(20), default="1.0")   # version being prepared
     published_at: Mapped[date | None] = mapped_column(Date, nullable=True)
+    change_note: Mapped[str] = mapped_column(Text, default="")             # what the version in preparation changes
+    review_months: Mapped[int | None] = mapped_column(Integer, nullable=True)  # None = site default
+    next_review: Mapped[date | None] = mapped_column(Date, nullable=True)  # periodic review of the published version
+    ack_required: Mapped[bool] = mapped_column(Boolean, default=False)     # readers must acknowledge
     checked_out_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     checked_out_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
@@ -176,6 +193,15 @@ class Document(Base):
     @property
     def is_overdue(self) -> bool:
         return self.status in ACTIVE_STATUSES and self.stage_due is not None and self.stage_due < date.today()
+
+    @property
+    def review_overdue(self) -> bool:
+        return self.status == PUBLISHED and self.next_review is not None and self.next_review < date.today()
+
+    @property
+    def id_label(self) -> str:
+        """The {ID} tag: at least 4 digits (0001), more when needed (10000)."""
+        return f"{self.number:04d}" if self.number else ""
 
 
 class Assignment(Base):
@@ -255,6 +281,7 @@ class Publication(Base):
     title: Mapped[str] = mapped_column(String(300))               # title at publication time
     text: Mapped[str] = mapped_column(Text, default="")           # extracted text, for search
     change_note: Mapped[str] = mapped_column(Text, default="")
+    signed: Mapped[bool] = mapped_column(Boolean, default=False)  # PAdES signature applied
 
     document: Mapped[Document] = relationship(back_populates="publications")
 
@@ -313,3 +340,66 @@ class ReminderLog(Base):
     kind: Mapped[str] = mapped_column(String(20))       # soon | overdue
     stage_started_at: Mapped[datetime] = mapped_column(DateTime)
     sent_on: Mapped[date] = mapped_column(Date)
+
+
+class StageLog(Base):
+    """One stage of one cycle: start, deadline, end. Feeds the indicators page."""
+
+    __tablename__ = "stage_log"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    document_id: Mapped[int] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), index=True)
+    stage: Mapped[str] = mapped_column(String(20), index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    due: Mapped[date | None] = mapped_column(Date, nullable=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    owner_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    @property
+    def on_time(self) -> bool | None:
+        if self.ended_at is None or self.due is None:
+            return None
+        return self.ended_at.date() <= self.due
+
+
+class Acknowledgment(Base):
+    """A reader confirms having read one published version."""
+
+    __tablename__ = "acknowledgments"
+    __table_args__ = (UniqueConstraint("publication_id", "user_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    document_id: Mapped[int] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), index=True)
+    publication_id: Mapped[int] = mapped_column(ForeignKey("publications.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    acknowledged_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    user: Mapped[User] = relationship()
+
+
+class ApiToken(Base):
+    """Read-only API access for other tools (only the hash is stored)."""
+
+    __tablename__ = "api_tokens"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100))
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class WebhookDelivery(Base):
+    """Outgoing webhook call (Teams, Slack, any JSON endpoint), sent by the background job."""
+
+    __tablename__ = "webhook_outbox"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    url: Mapped[str] = mapped_column(String(500))
+    payload: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[str] = mapped_column(Text, default="")

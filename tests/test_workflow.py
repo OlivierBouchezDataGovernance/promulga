@@ -6,7 +6,7 @@ from datetime import date, timedelta
 
 import pytest
 
-from promulga import reminders, site_settings, workflow
+from promulga import docx_meta, reminders, site_settings, storage, workflow
 from promulga.models import OutboxMail, Publication, User
 from promulga.workflow import WorkflowError
 
@@ -35,8 +35,8 @@ def test_full_cycle_with_rejection_and_new_revision(db):
     assert doc.stage_due == date.today() + timedelta(days=28)
     owner, rev, app = _user(db, "owner@example.org"), _user(db, "rev@example.org"), _user(db, "app@example.org")
 
-    with pytest.raises(WorkflowError, match="Check in a file"):
-        workflow.submit(db, owner, doc)
+    first = doc.latest_revision        # no file given: a blank Word document with its cover page
+    assert first.filename.endswith(".docx") and docx_meta.has_cover(storage.read_bytes(first.storage_path))
     with pytest.raises(WorkflowError, match="owner"):
         workflow.check_in(db, rev, doc, "x.pdf", make_pdf())
 
@@ -63,14 +63,17 @@ def test_full_cycle_with_rejection_and_new_revision(db):
     pub = db.query(Publication).filter_by(document_id=doc.id).one()
     assert pub.version == "1.0" and "v2" in pub.text and "POL-0001" in pub.text   # stamped footer
 
-    workflow.start_revision(db, admin, doc, "minor")
+    with pytest.raises(WorkflowError, match="change note"):
+        workflow.start_revision(db, admin, doc, "minor")
+    workflow.start_revision(db, admin, doc, "minor", "Scope extended to suppliers")
     assert doc.status == "Draft" and doc.next_version == "1.1" and doc.current_version == "1.0"
     workflow.submit(db, owner, doc)          # last revision is reused
     workflow.review_done(db, rev, doc)
     workflow.submit(db, owner, doc)
     workflow.approve(db, app, doc)
     assert doc.current_version == "1.1"
-    workflow.start_revision(db, admin, doc, "major")
+    assert doc.latest_publication.change_note == "Scope extended to suppliers"
+    workflow.start_revision(db, admin, doc, "major", "Rewrite")
     assert doc.next_version == "2.0"
 
 

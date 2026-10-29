@@ -51,8 +51,16 @@ DEFAULTS: dict[str, Any] = {
     "reminder_hour": 8,             # local server hour at which reminders run
     "manager_digest": True,         # daily overdue summary to Document Managers
     "notify_on_publish": True,      # e-mail all participants when a version is published
+    "review_months": 12,            # periodic review of published documents; 0 = none (per-document override)
+    "review_reminder_days": 30,     # warn the owner N days before the periodic review is due
+    # Integrations -------------------------------------------------------------
+    "webhook_urls": [],             # https URLs receiving a JSON message at each workflow event
+    "export_auto": False,           # push the public package after every publication
     # Internal bookkeeping (not shown in forms) -----------------------------
     "last_reminder_run": "",
+    "export_pending": False,
+    "last_export": "",
+    "last_backup": "",
 }
 
 COLOR_KEYS = ["color_primary", "color_primary_dark", "color_accent", "color_success",

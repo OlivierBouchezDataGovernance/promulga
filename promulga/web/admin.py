@@ -9,21 +9,24 @@ commit, and redirect back with a message.
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import re
+import secrets
 from datetime import date
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from sqlalchemy import or_
 from sqlalchemy.orm import Session, selectinload
 
-from .. import accounts, icons, mailer, reminders, site_settings, storage, workflow
+from .. import (accounts, docx_meta, export, icons, insights, mailer, naming, onlyoffice, reminders, site_settings,
+               storage, workflow)
 from ..config import get_config
 from ..db import get_db
 from ..models import (
-    ACTIVE_STATUSES, APPROVAL, REVIEW, ROLES, STATUSES, Assignment, Comment, Document, Event, OutboxMail,
-    Publication, Revision, Taxonomy, Term, User,
+    ACTIVE_STATUSES, APPROVAL, REVIEW, ROLES, STATUSES, ApiToken, Assignment, Comment, Document, Event, OutboxMail,
+    Publication, Revision, Taxonomy, Term, User, WebhookDelivery,
 )
 from ..security import check_password_strength, hash_password, verify_password
 from .deps import (
@@ -50,6 +53,18 @@ async def _read_upload(upload: UploadFile | None) -> tuple[str, bytes] | None:
     if len(data) > limit:
         raise workflow.WorkflowError(f"The file is larger than {get_config().max_upload_mb} MB.")
     return upload.filename, data
+
+
+def _months(value: str) -> int | None:
+    value = (value or "").strip()
+    return max(0, min(120, int(value))) if value.isdigit() else None
+
+
+def _warn(request: Request, doc: Document, filename: str | None = None) -> None:
+    for w in workflow.segregation_warnings(doc):
+        flash(request, w, "error")
+    if filename and docx_meta.capability_warning(filename):
+        flash(request, docx_meta.capability_warning(filename), "error")
 
 
 def _get_doc(db: Session, doc_id: int, user: User) -> Document:
@@ -140,12 +155,15 @@ def new_document_form(request: Request, db: Session = Depends(get_db), user: Use
 async def new_document(request: Request, title: str = Form(""), doc_type: str = Form(""), summary: str = Form(""),
                        owner: str = Form(""), reviewers: str = Form(""), approvers: str = Form(""),
                        terms: list[str] = Form([]), file: UploadFile | None = File(None),
+                       review_months: str = Form(""), ack_required: str = Form(""),
                        db: Session = Depends(get_db), user: User = Depends(require_manager)):
     try:
+        upload = await _read_upload(file)
         doc = workflow.create_document(
             db, user, title=title, doc_type=doc_type, summary=summary, owner_email=owner,
             reviewer_emails=accounts.parse_emails(reviewers), approver_emails=accounts.parse_emails(approvers),
-            term_ids=_int_list(terms), file=await _read_upload(file))
+            term_ids=_int_list(terms), file=upload, review_months=_months(review_months),
+            ack_required=ack_required == "1")
         db.commit()
     except (workflow.WorkflowError, accounts.AccountError, ValueError) as exc:
         db.rollback()
@@ -157,6 +175,7 @@ async def new_document(request: Request, title: str = Form(""), doc_type: str = 
                             "reviewers": reviewers, "approvers": approvers},
                       messages=request.session.pop("flash", []))
     flash(request, f"{doc.ref} created. The owner received an e-mail.", "success")
+    _warn(request, doc, upload[0] if upload else None)
     return redirect(f"/admin/documents/{doc.id}")
 
 
@@ -167,7 +186,8 @@ def edit_document_form(doc_id: int, request: Request, db: Session = Depends(get_
     users = db.query(User).filter(User.active.is_(True), User.role != "viewer").order_by(User.email).all()
     form = {"title": doc.title, "doc_type": doc.doc_type, "summary": doc.summary, "owner": doc.owner.email,
             "reviewers": ", ".join(a.user.email for a in doc.reviewers),
-            "approvers": ", ".join(a.user.email for a in doc.approvers)}
+            "approvers": ", ".join(a.user.email for a in doc.approvers),
+            "review_months": "" if doc.review_months is None else doc.review_months, "ack_required": doc.ack_required}
     return render(request, db, "admin/document_form.html", user=user, doc=doc, taxonomies=_taxonomies(db),
                   users=users, selected_terms={t.id for t in doc.terms}, form=form)
 
@@ -175,10 +195,12 @@ def edit_document_form(doc_id: int, request: Request, db: Session = Depends(get_
 @router.post("/documents/{doc_id}/edit", dependencies=[Depends(csrf_protect)])
 def edit_document(doc_id: int, request: Request, title: str = Form(""), summary: str = Form(""),
                   owner: str = Form(""), reviewers: str = Form(""), approvers: str = Form(""),
-                  terms: list[str] = Form([]), db: Session = Depends(get_db), user: User = Depends(require_manager)):
+                  terms: list[str] = Form([]), review_months: str = Form(""), ack_required: str = Form(""),
+                  db: Session = Depends(get_db), user: User = Depends(require_manager)):
     doc = _get_doc(db, doc_id, user)
     try:
-        workflow.update_metadata(db, user, doc, title=title, summary=summary, term_ids=_int_list(terms))
+        workflow.update_metadata(db, user, doc, title=title, summary=summary, term_ids=_int_list(terms),
+                                 review_months=_months(review_months), ack_required=ack_required == "1")
         new_people = (owner.strip().lower(), accounts.parse_emails(reviewers), accounts.parse_emails(approvers))
         old_people = (doc.owner.email, [a.user.email for a in doc.reviewers], [a.user.email for a in doc.approvers])
         if new_people != old_people:
@@ -186,6 +208,7 @@ def edit_document(doc_id: int, request: Request, title: str = Form(""), summary:
                                          approver_emails=new_people[2])
         db.commit()
         flash(request, "Document updated.", "success")
+        _warn(request, doc)
     except (workflow.WorkflowError, accounts.AccountError, ValueError) as exc:
         db.rollback()
         flash(request, str(exc), "error")
@@ -208,9 +231,13 @@ def document_page(doc_id: int, request: Request, db: Session = Depends(get_db),
         if c.parent_id:
             replies.setdefault(c.parent_id, []).append(c)
     actions = workflow.allowed_actions(doc, user)
+    latest = doc.latest_revision
+    ack = workflow.acknowledgment_status(db, doc) if doc.ack_required and doc.publications else None
     return render(request, db, "admin/document.html", user=user, doc=doc, events=events, actions=actions,
                   has_task=bool(actions - {"comment", "edit"}), max_mb=get_config().max_upload_mb,
-                  pending=workflow.pending_users(doc),
+                  pending=workflow.pending_users(doc), sod=workflow.segregation_warnings(doc),
+                  capability=docx_meta.capability_warning(latest.filename) if latest else "",
+                  editor=onlyoffice.available(latest), ack=ack,
                   comments=top, replies=replies, open_comments=sum(1 for c in top if not c.resolved))
 
 
@@ -221,8 +248,17 @@ def download_revision(doc_id: int, rev_id: int, db: Session = Depends(get_db),
     rev = db.get(Revision, rev_id)
     if rev is None or rev.document_id != doc.id:
         raise HTTPException(404)
-    name = f"{doc.ref} - r{rev.number} - {rev.filename}"
-    return FileResponse(storage.absolute(rev.storage_path), media_type=rev.content_type, filename=name)
+    ext = "." + rev.filename.rsplit(".", 1)[-1].lower() if "." in rev.filename else ""
+    name = naming.file_name(doc, ext, site_settings.get_all(db))
+    data = storage.read_bytes(rev.storage_path)
+    if docx_meta.supports_metadata(rev.filename) and rev.id == doc.latest_revision.id:
+        try:
+            data = workflow.refresh_docx(db, doc, data)   # current status and dates in the downloaded copy
+        except Exception:
+            pass
+    from urllib.parse import quote
+    return Response(data, media_type=rev.content_type,
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"})
 
 
 @router.get("/documents/{doc_id}/comments/{comment_id}/attachment")
@@ -242,8 +278,30 @@ def download_publication(doc_id: int, pub_id: int, db: Session = Depends(get_db)
     pub = db.get(Publication, pub_id)
     if pub is None or pub.document_id != doc.id:
         raise HTTPException(404)
-    return FileResponse(storage.absolute(pub.pdf_path), media_type="application/pdf",
-                        filename=f"{doc.ref} - v{pub.version}.pdf", content_disposition_type="inline")
+    name = naming.file_name(doc, ".pdf", site_settings.get_all(db), version=pub.version, draft=False,
+                            published=pub.published_at)
+    return FileResponse(storage.absolute(pub.pdf_path), media_type="application/pdf", filename=name,
+                        content_disposition_type="inline")
+
+
+@router.get("/documents/{doc_id}/compare")
+def compare(doc_id: int, request: Request, a: int = 0, b: int = 0, db: Session = Depends(get_db),
+            user: User = Depends(require_contributor)):
+    """Text comparison of two revisions (default: last published source vs latest revision)."""
+    doc = _get_doc(db, doc_id, user)
+    revs = {r.id: r for r in doc.revisions}
+    if not revs:
+        raise HTTPException(404)
+    new = revs.get(b) or doc.latest_revision
+    default_old = None
+    if doc.latest_publication and doc.latest_publication.source_revision_id in revs:
+        default_old = revs[doc.latest_publication.source_revision_id]
+    if default_old is None or default_old.id == new.id:
+        default_old = next((r for r in doc.revisions if r.number < new.number), new)
+    old = revs.get(a) or default_old
+    lines = insights.compare(old, new)
+    return render(request, db, "admin/compare.html", user=user, doc=doc, old=old, new=new, lines=lines,
+                  added=sum(1 for op, _ in lines if op == "+"), removed=sum(1 for op, _ in lines if op == "-"))
 
 
 def _run(request: Request, db: Session, doc_id: int, fn, ok: str):
@@ -289,8 +347,11 @@ async def checkin(doc_id: int, request: Request, note: str = Form(""), file: Upl
     except workflow.WorkflowError as exc:
         flash(request, str(exc), "error")
         return redirect(f"/admin/documents/{doc_id}")
-    return _run(request, db, doc_id, lambda: workflow.check_in(db, user, doc, upload[0], upload[1], note),
-                "New revision checked in.")
+    response = _run(request, db, doc_id, lambda: workflow.check_in(db, user, doc, upload[0], upload[1], note),
+                    "New revision checked in.")
+    if docx_meta.capability_warning(upload[0]):
+        flash(request, docx_meta.capability_warning(upload[0]), "error")
+    return response
 
 
 @router.post("/documents/{doc_id}/comments", dependencies=[Depends(csrf_protect)])
@@ -406,7 +467,8 @@ def reinvite(user_id: int, request: Request, db: Session = Depends(get_db), user
 
 @router.get("/taxonomies")
 def taxonomies_page(request: Request, db: Session = Depends(get_db), user: User = Depends(require_manager)):
-    return render(request, db, "admin/taxonomies.html", user=user, taxonomies=_taxonomies(db))
+    return render(request, db, "admin/taxonomies.html", user=user, taxonomies=_taxonomies(db),
+                  cfg_export_tag=get_config().export_tag)
 
 
 @router.post("/taxonomies/new", dependencies=[Depends(csrf_protect)])
@@ -444,7 +506,8 @@ def update_taxonomy(tax_id: int, request: Request, name: str = Form(""), descrip
 
 @router.post("/taxonomies/{tax_id}/terms", dependencies=[Depends(csrf_protect)])
 def create_term(tax_id: int, request: Request, name: str = Form(""), parent_id: str = Form(""),
-                description: str = Form(""), db: Session = Depends(get_db), user: User = Depends(require_manager)):
+                description: str = Form(""), code: str = Form(""), db: Session = Depends(get_db),
+                user: User = Depends(require_manager)):
     tax = db.get(Taxonomy, tax_id)
     if tax is None or not name.strip():
         flash(request, "The term name is required.", "error")
@@ -455,14 +518,19 @@ def create_term(tax_id: int, request: Request, name: str = Form(""), parent_id: 
         n += 1
         slug = f"{_slug(name)}-{n}"
     db.add(Term(taxonomy=tax, name=name.strip()[:150], slug=slug, description=description.strip(),
+                code=_code(code),
                 parent_id=parent.id if parent and parent.taxonomy_id == tax.id else None))
     db.commit()
     return redirect(f"/admin/taxonomies#tax-{tax.id}")
 
 
+def _code(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_-]", "", value or "").upper()[:20]
+
+
 @router.post("/terms/{term_id}", dependencies=[Depends(csrf_protect)])
 def update_term(term_id: int, request: Request, name: str = Form(""), parent_id: str = Form(""),
-                sort: int = Form(0), delete: str = Form(""), db: Session = Depends(get_db),
+                sort: int = Form(0), delete: str = Form(""), code: str = Form(""), db: Session = Depends(get_db),
                 user: User = Depends(require_manager)):
     term = db.get(Term, term_id)
     if term is None:
@@ -473,7 +541,7 @@ def update_term(term_id: int, request: Request, name: str = Form(""), parent_id:
             child.parent_id = term.parent_id
         db.delete(term)
     else:
-        term.name, term.sort = name.strip()[:150] or term.name, sort
+        term.name, term.sort, term.code = name.strip()[:150] or term.name, sort, _code(code)
         new_parent = int(parent_id) if parent_id.isdigit() else None
         # Refuse cycles: the new parent may not be the term itself or one of its descendants.
         ancestor = db.get(Term, new_parent) if new_parent else None
@@ -494,6 +562,27 @@ def update_term(term_id: int, request: Request, name: str = Form(""), parent_id:
 @router.get("/settings")
 def settings_page(request: Request, db: Session = Depends(get_db), user: User = Depends(require_admin)):
     return render(request, db, "admin/settings.html", user=user, cfg=get_config(), icon_names=sorted(icons.ICONS))
+
+
+@router.post("/settings/integrations", dependencies=[Depends(csrf_protect)])
+def save_integrations(request: Request, webhook_urls: str = Form(""), export_auto: str = Form(""),
+                      test: str = Form(""), db: Session = Depends(get_db), user: User = Depends(require_admin)):
+    urls = [u.strip() for u in re.split(r"[\s,]+", webhook_urls) if u.strip()]
+    bad = [u for u in urls if not u.startswith("https://")]
+    if bad:
+        flash(request, "Webhook URLs must start with https://: " + ", ".join(bad), "error")
+        return redirect("/admin/settings#integrations")
+    site_settings.set_many(db, {"webhook_urls": urls, "export_auto": export_auto == "1"})
+    workflow.log_admin(db, user, "Integration settings changed", f"{len(urls)} webhook(s)")
+    db.commit()
+    if test == "1":
+        for url in urls:
+            try:
+                flash(request, f"Test message to {url[:40]}...: {insights.test_webhook(url)}")
+            except Exception as exc:
+                flash(request, f"Test message to {url[:40]}... failed: {exc}", "error")
+    flash(request, "Integrations saved.", "success")
+    return redirect("/admin/settings#integrations")
 
 
 @router.post("/settings/look", dependencies=[Depends(csrf_protect)])
@@ -530,6 +619,7 @@ async def save_workflow(request: Request, draft_days: int = Form(28), review_day
                         reminder_before_days: int = Form(3), overdue_repeat_days: int = Form(1),
                         reminder_hour: int = Form(8), manager_digest: str = Form(""),
                         notify_on_publish: str = Form(""), doc_types: str = Form(""),
+                        review_months: int = Form(12), review_reminder_days: int = Form(30),
                         template: UploadFile | None = File(None), remove_template: str = Form(""),
                         db: Session = Depends(get_db), user: User = Depends(require_admin)):
     types = []
@@ -554,6 +644,8 @@ async def save_workflow(request: Request, draft_days: int = Form(28), review_day
         "manager_digest": manager_digest == "1",
         "notify_on_publish": notify_on_publish == "1",
         "doc_types": types,
+        "review_months": max(0, min(120, review_months)),
+        "review_reminder_days": max(0, min(365, review_reminder_days)),
     }
     if remove_template == "1":
         values["template_asset"] = ""
@@ -663,7 +755,31 @@ def audit_csv(q: str = "", ref: str = "", db: Session = Depends(get_db), user: U
 
 @router.get("/account")
 def account(request: Request, db: Session = Depends(get_db), user: User = Depends(require_contributor)):
-    return render(request, db, "admin/account.html", user=user)
+    people = db.query(User).filter(User.active.is_(True), User.role != "viewer", User.id != user.id) \
+        .order_by(User.email).all()
+    return render(request, db, "admin/account.html", user=user, people=people)
+
+
+@router.post("/account/absence", dependencies=[Depends(csrf_protect)])
+def update_absence(request: Request, deputy_id: str = Form(""), absent_until: str = Form(""),
+                   db: Session = Depends(get_db), user: User = Depends(require_contributor)):
+    deputy = db.get(User, int(deputy_id)) if deputy_id.isdigit() else None
+    if deputy is not None and (deputy.id == user.id or not deputy.active):
+        deputy = None
+    try:
+        until = date.fromisoformat(absent_until) if absent_until else None
+    except ValueError:
+        until = None
+    if until and not deputy:
+        flash(request, "Choose a deputy who will act for you during your absence.", "error")
+        return redirect("/admin/account")
+    user.deputy_id = deputy.id if deputy else None
+    user.absent_until = until
+    workflow.log_admin(db, user, "Absence and deputy changed",
+                       f"absent until {until or '-'}, deputy {deputy.email if deputy else '-'}")
+    db.commit()
+    flash(request, "Saved." + (f" {deputy.display} can act for you until {until}." if until else ""), "success")
+    return redirect("/admin/account")
 
 
 @router.post("/account", dependencies=[Depends(csrf_protect)])
@@ -671,6 +787,10 @@ def update_account(request: Request, name: str = Form(""), current: str = Form("
                    password2: str = Form(""), db: Session = Depends(get_db),
                    user: User = Depends(require_contributor)):
     user.name = name.strip()[:200]
+    if user.must_change_password and not password:
+        db.rollback()
+        flash(request, "Please choose a new password.", "error")
+        return redirect("/admin/account")
     if password:
         try:
             if user.password_hash and not verify_password(user, current):
@@ -683,8 +803,138 @@ def update_account(request: Request, name: str = Form(""), current: str = Form("
             flash(request, str(exc), "error")
             return redirect("/admin/account")
         user.password_hash = hash_password(password)
+        user.must_change_password = False
         workflow.log_admin(db, user, "Password changed")
     db.commit()
     login_session(request, user)
     flash(request, "Account saved.", "success")
     return redirect("/admin/account")
+
+
+# ---------------------------------------------------------------------------
+# Online editor (OnlyOffice)
+# ---------------------------------------------------------------------------
+
+@router.get("/documents/{doc_id}/editor")
+def online_editor(doc_id: int, request: Request, db: Session = Depends(get_db),
+                  user: User = Depends(require_contributor)):
+    doc = _get_doc(db, doc_id, user)
+    rev = doc.latest_revision
+    if not onlyoffice.available(rev):
+        flash(request, "The online editor is not available for this document.", "error")
+        return redirect(f"/admin/documents/{doc_id}")
+    config = onlyoffice.editor_config(doc, rev, user)
+    return render(request, db, "admin/editor.html", user=user, doc=doc, config=config,
+                  api_js=f"{get_config().onlyoffice_url}/web-apps/apps/api/documents/api.js")
+
+
+# ---------------------------------------------------------------------------
+# Read & acknowledge (managers)
+# ---------------------------------------------------------------------------
+
+@router.post("/documents/{doc_id}/acknowledgments/remind", dependencies=[Depends(csrf_protect)])
+def remind_acknowledgments(doc_id: int, request: Request, db: Session = Depends(get_db),
+                           user: User = Depends(require_manager)):
+    doc = _get_doc(db, doc_id, user)
+    return _run(request, db, doc_id, lambda: workflow.remind_acknowledgments(db, user, doc),
+                "Reminder sent to the people who have not acknowledged yet.")
+
+
+@router.get("/documents/{doc_id}/acknowledgments.csv")
+def acknowledgments_csv(doc_id: int, db: Session = Depends(get_db), user: User = Depends(require_manager)):
+    doc = _get_doc(db, doc_id, user)
+    status = workflow.acknowledgment_status(db, doc)
+    out = io.StringIO()
+    w = csv.writer(out)
+    w.writerow(["E-mail", "Name", "Version", "Acknowledged at (UTC)"])
+    version = status["publication"].version if status["publication"] else ""
+    for u, a in status["done"]:
+        w.writerow([u.email, u.name, version, a.acknowledged_at.strftime("%Y-%m-%d %H:%M")])
+    for u in status["missing"]:
+        w.writerow([u.email, u.name, version, ""])
+    return StreamingResponse(iter([out.getvalue()]), media_type="text/csv",
+                             headers={"Content-Disposition": f"attachment; filename={doc.ref}-acknowledgments.csv"})
+
+
+# ---------------------------------------------------------------------------
+# Indicators, security checks
+# ---------------------------------------------------------------------------
+
+@router.get("/indicators")
+def indicators(request: Request, months: int = 12, db: Session = Depends(get_db),
+               user: User = Depends(require_manager)):
+    months = max(1, min(60, months))
+    return render(request, db, "admin/indicators.html", user=user, k=insights.kpis(db, months))
+
+
+@router.get("/security")
+def security(request: Request, db: Session = Depends(get_db), user: User = Depends(require_admin)):
+    return render(request, db, "admin/security.html", user=user, checks=insights.security_checks(db))
+
+
+# ---------------------------------------------------------------------------
+# Public export
+# ---------------------------------------------------------------------------
+
+@router.get("/export")
+def export_page(request: Request, db: Session = Depends(get_db), user: User = Depends(require_admin)):
+    return render(request, db, "admin/export.html", user=user, cfg=get_config(),
+                  docs=export.exported_documents(db))
+
+
+@router.get("/export/package.zip")
+def export_zip(db: Session = Depends(get_db), user: User = Depends(require_admin)):
+    data = export.zip_bytes(export.build(db))
+    workflow.log_admin(db, user, "Public package downloaded", f"{len(data)} bytes")
+    db.commit()
+    return Response(data, media_type="application/zip",
+                    headers={"Content-Disposition": f"attachment; filename=public-documents-{date.today()}.zip"})
+
+
+@router.post("/export/github", dependencies=[Depends(csrf_protect)])
+def export_github(request: Request, db: Session = Depends(get_db), user: User = Depends(require_admin)):
+    try:
+        files = export.build(db)
+        sha = export.push_github(files, f"Promulga: {len(export.exported_documents(db))} public document(s)")
+    except export.ExportError as exc:
+        flash(request, str(exc), "error")
+        return redirect("/admin/export")
+    site_settings.set_many(db, {"last_export": f"{date.today()} {sha[:10] or 'no change'}", "export_pending": False})
+    workflow.log_admin(db, user, "Public package pushed to GitHub", sha or "no change")
+    db.commit()
+    flash(request, f"Pushed to GitHub: commit {sha[:10]}." if sha else "GitHub is already up to date.", "success")
+    return redirect("/admin/export")
+
+
+# ---------------------------------------------------------------------------
+# API tokens (administrators)
+# ---------------------------------------------------------------------------
+
+@router.get("/api-tokens")
+def api_tokens(request: Request, db: Session = Depends(get_db), user: User = Depends(require_admin)):
+    tokens = db.query(ApiToken).order_by(ApiToken.revoked, ApiToken.id.desc()).all()
+    new_token = request.session.pop("new_api_token", None)
+    return render(request, db, "admin/api_tokens.html", user=user, tokens=tokens, new_token=new_token)
+
+
+@router.post("/api-tokens", dependencies=[Depends(csrf_protect)])
+def create_api_token(request: Request, name: str = Form(""), db: Session = Depends(get_db),
+                     user: User = Depends(require_admin)):
+    token = "prm_" + secrets.token_urlsafe(32)
+    db.add(ApiToken(name=(name.strip() or "API client")[:100], created_by_id=user.id,
+                    token_hash=hashlib.sha256(token.encode()).hexdigest()))
+    workflow.log_admin(db, user, "API token created", name.strip())
+    db.commit()
+    request.session["new_api_token"] = token     # shown once, on the next page
+    return redirect("/admin/api-tokens")
+
+
+@router.post("/api-tokens/{token_id}/revoke", dependencies=[Depends(csrf_protect)])
+def revoke_api_token(token_id: int, request: Request, db: Session = Depends(get_db),
+                     user: User = Depends(require_admin)):
+    row = db.get(ApiToken, token_id)
+    if row:
+        row.revoked = True
+        workflow.log_admin(db, user, "API token revoked", row.name)
+        db.commit()
+    return redirect("/admin/api-tokens")

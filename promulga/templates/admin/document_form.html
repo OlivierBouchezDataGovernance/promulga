@@ -31,9 +31,15 @@
     <datalist id="people">{% for u in users %}<option value="{{ u.email }}">{{ u.display }}</option>{% endfor %}</datalist>
     {% if users %}<p class="hint">Known people: {% for u in users %}{{ u.email }}{{ ', ' if not loop.last }}{% endfor %}</p>{% endif %}
 
+    <div class="row">
+      <div><label for="review_months">Periodic review <span class="hint">(months; empty = default {{ site.review_months }}, 0 = none)</span></label>
+        <input id="review_months" type="number" min="0" max="120" name="review_months" value="{{ form.review_months if form.review_months is not none else '' }}"></div>
+      <div><label class="check" style="margin-top:2.2rem"><input type="checkbox" name="ack_required" value="1" {{ 'checked' if form.ack_required }}> Readers must acknowledge each version</label></div>
+    </div>
     {% if not doc %}
     <label for="file">Initial file <span class="hint">(optional{% if site.template_asset %}; otherwise the template is used{% endif %})</span></label>
     <input id="file" type="file" name="file">
+    <p class="hint">Word (.docx) gets the automatic cover page and variables ({{ '{{TITLE}}' }}, {{ '{{VERSION}}' }}...). Without a file, a blank Word document with its cover page is created.</p>
     {% endif %}
     <div class="actions">
       <button class="btn" type="submit">{{ 'Save' if doc else 'Create document' }}</button>

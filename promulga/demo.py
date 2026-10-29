@@ -19,7 +19,11 @@ from . import site_settings, workflow
 from .accounts import create_user, find
 from .models import ROLE_ADMIN, ROLE_CONTRIBUTOR, ROLE_MANAGER, Document, Taxonomy, Term, User
 
+CODES = {"Data governance": "DG", "Information security": "SEC", "Privacy": "PRIV", "AI governance": "AI",
+         "Data quality": "DQ", "Metadata & catalogue": "MD", "Data ownership": "OWN"}
+
 TAXONOMIES = {
+    ("Visibility", "Which documents are exported to the public web site"): {"Public": [], "Internal": []},
     ("Domain", "Governance domain the document belongs to"): {
         "Data governance": ["Data quality", "Metadata & catalogue", "Data ownership"],
         "Information security": ["Access control", "Incident management"],
@@ -43,9 +47,9 @@ PEOPLE = [
 
 DOCS = [
     # title, type, terms, target status
-    ("Data Quality Policy", "Policy", ["Data quality", "GDPR", "Data owners"], "Published"),
-    ("Data Ownership Standard", "Standard", ["Data ownership", "All staff"], "Published"),
-    ("Access Review Procedure", "Procedure", ["Access control", "ISO 27001", "IT"], "Published"),
+    ("Data Quality Policy", "Policy", ["Data quality", "GDPR", "Data owners", "Public"], "Published"),
+    ("Data Ownership Standard", "Standard", ["Data ownership", "All staff", "Public"], "Published"),
+    ("Access Review Procedure", "Procedure", ["Access control", "ISO 27001", "IT", "Internal"], "Published"),
     ("Records Retention Policy", "Policy", ["Retention", "GDPR", "All staff"], "Review"),
     ("Responsible AI Guideline", "Guideline", ["AI governance", "EU AI Act", "Management"], "Draft"),
 ]
@@ -75,14 +79,16 @@ def load_demo(db: Session) -> str:
 
     terms: dict[str, Term] = {}
     for sort, ((name, description), tree) in enumerate(TAXONOMIES.items()):
-        tax = Taxonomy(name=name, slug=name.lower(), description=description, sort=sort)
+        tax = Taxonomy(name=name, slug=name.lower(), description=description, sort=sort)  # slug "domain" feeds {DOMAIN}
         db.add(tax)
         for parent_name, kids in tree.items():
-            parent = Term(taxonomy=tax, name=parent_name, slug=workflow_slug(parent_name))
+            parent = Term(taxonomy=tax, name=parent_name, slug=workflow_slug(parent_name),
+                          code=CODES.get(parent_name, ""))
             db.add(parent)
             terms[parent_name] = parent
             for kid in kids:
-                terms[kid] = Term(taxonomy=tax, name=kid, slug=workflow_slug(kid), parent=parent)
+                terms[kid] = Term(taxonomy=tax, name=kid, slug=workflow_slug(kid), parent=parent,
+                                  code=CODES.get(kid, ""))
                 db.add(terms[kid])
     db.flush()
 
@@ -96,7 +102,7 @@ def load_demo(db: Session) -> str:
         doc = workflow.create_document(
             db, manager, title=title, doc_type=doc_type, summary=f"Demo {doc_type.lower()}: {title}.",
             owner_email=owner.email, reviewer_emails=[reviewer.email], approver_emails=[approver.email],
-            term_ids=[terms[t].id for t in tag_names], file=None)
+            term_ids=[terms[t].id for t in tag_names], file=None, ack_required=title == "Data Quality Policy")
         workflow.check_in(db, owner, doc, f"{title}.pdf", _sample_pdf(title), "First draft")
         if target == "Draft":
             continue
@@ -107,10 +113,12 @@ def load_demo(db: Session) -> str:
         workflow.add_comment(db, reviewer, doc, "Please define 'critical data element' in section 2.")
         workflow.review_done(db, reviewer, doc)
         workflow.check_in(db, owner, doc, f"{title}.pdf", _sample_pdf(title), "Definitions added")
+        workflow.add_comment(db, owner, doc, "Done: definition added in section 2.",
+                             parent_id=doc.comments[0].id if doc.comments else None)
         workflow.submit(db, owner, doc)
         workflow.approve(db, approver, doc, "Approved for publication.")
-    return ("Demo data loaded: 3 taxonomies, 4 example users, 5 documents. The example users' invitation links "
-            "are in Admin > Outbox.")
+    return ("Demo data loaded: 4 taxonomies, 4 example users, 5 documents (2 tagged Public for the export). "
+            "The example users' invitation links are in Admin > Outbox.")
 
 
 def workflow_slug(text: str) -> str:

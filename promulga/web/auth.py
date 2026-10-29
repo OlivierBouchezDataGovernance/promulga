@@ -110,6 +110,7 @@ def set_password(request: Request, token: str = Form(""), purpose: str = Form("i
         flash(request, "This link is invalid or has expired. Ask for a new one.", "error")
         return redirect("/auth/forgot")
     user.password_hash = hash_password(password)
+    user.must_change_password = False
     if name.strip():
         user.name = name.strip()[:200]
     user.last_login_at = utcnow()

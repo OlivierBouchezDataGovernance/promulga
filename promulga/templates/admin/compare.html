@@ -1,0 +1,25 @@
+{% extends "admin/base.html" %}
+{% block title %}Compare {{ doc.ref }} - {{ site.site_name }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="container">
+  <div class="crumbs"><a href="/admin/documents">Register</a> / <a href="/admin/documents/{{ doc.id }}">{{ doc.ref }}</a> / compare</div>
+  <h1>Compare versions</h1>
+  <form class="filters" method="get" action="/admin/documents/{{ doc.id }}/compare">
+    <div><label for="a">From</label><select id="a" name="a">
+      {% for r in doc.revisions %}<option value="{{ r.id }}" {{ 'selected' if r.id == old.id }}>r{{ r.number }} - {{ r.uploaded_at | fdate }} - {{ r.status_at_upload }}</option>{% endfor %}</select></div>
+    <div><label for="b">To</label><select id="b" name="b">
+      {% for r in doc.revisions %}<option value="{{ r.id }}" {{ 'selected' if r.id == new.id }}>r{{ r.number }} - {{ r.uploaded_at | fdate }} - {{ r.status_at_upload }}</option>{% endfor %}</select></div>
+    <div><button class="btn btn-sm" type="submit">Compare</button></div>
+  </form>
+  <p class="small muted">Text only (formatting is ignored). <span class="done">+{{ added }}</span> / <span class="late">-{{ removed }}</span> paragraph(s).</p>
+</div></div>
+<section class="section"><div class="container">
+  <div class="card" style="font-size:.9rem">
+    {% for op, line in lines %}
+      {% if op == '+' %}<div style="background:#d1fae5;color:#065f46;padding:.15rem .5rem;border-radius:4px;margin:.1rem 0">+ {{ line }}</div>
+      {% elif op == '-' %}<div style="background:#fee2e2;color:#7f1d1d;padding:.15rem .5rem;border-radius:4px;margin:.1rem 0;text-decoration:line-through">- {{ line }}</div>
+      {% else %}<div style="padding:.15rem .5rem;color:var(--muted-dark)">{{ line }}</div>{% endif %}
+    {% else %}<p class="empty">No text to compare.</p>{% endfor %}
+  </div>
+</div></section>
+{% endblock %}

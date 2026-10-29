@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+from datetime import date
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -16,8 +17,8 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from .. import db as database
 from ..config import Config, get_config
-from . import admin, auth, portal
-from .deps import CsrfError, Forbidden, LoginRequired, login_url, render
+from . import admin, api, auth, oo, portal
+from .deps import CsrfError, Forbidden, LoginRequired, MustChangePassword, flash, login_url, render
 
 log = logging.getLogger("promulga")
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
@@ -42,7 +43,7 @@ class SiteRoutingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         host = (request.headers.get("host") or "").split(":")[0].lower()
         path = request.url.path
-        is_admin_path = path.startswith(("/admin", "/auth"))
+        is_admin_path = path.startswith(("/admin", "/auth", "/api", "/oo"))
         if self.cfg.admin_host and self.cfg.public_host:
             if host == self.cfg.public_host.lower() and path.startswith("/admin"):
                 return RedirectResponse(f"https://{self.cfg.admin_host}{path}", status_code=307)
@@ -64,9 +65,15 @@ class SiteRoutingMiddleware(BaseHTTPMiddleware):
 
 
 def bootstrap_admin(cfg: Config) -> None:
-    """Creates the first administrator from ADMIN_EMAIL / ADMIN_PASSWORD if no admin exists."""
+    """Creates the first administrator (ADMIN_EMAIL) if no administrator exists.
+
+    - Without ADMIN_PASSWORD (recommended): a one-time link to choose the
+      password is written to the logs (`docker compose logs app`), valid 24 h.
+    - With ADMIN_PASSWORD: the password works once and must be changed at the
+      first sign-in, so the value in .env is useless afterwards.
+    """
     from ..models import ROLE_ADMIN, User
-    from ..security import hash_password
+    from ..security import create_token, hash_password
 
     if not cfg.admin_email:
         return
@@ -78,19 +85,40 @@ def bootstrap_admin(cfg: Config) -> None:
             user = User(email=cfg.admin_email.lower(), name="Administrator", role=ROLE_ADMIN)
             db.add(user)
         user.role = ROLE_ADMIN
+        db.flush()
         if cfg.admin_password:
             user.password_hash = hash_password(cfg.admin_password)
-        log.info("First administrator created: %s", user.email)
+            user.must_change_password = True
+            log.warning("First administrator %s created with ADMIN_PASSWORD: it must be changed at the first "
+                        "sign-in. Remove ADMIN_PASSWORD from .env afterwards.", user.email)
+        else:
+            token = create_token(db, user, "invite", 24)
+            log.warning("First administrator %s created. Choose the password here (valid 24 h, single use): "
+                        "%s/auth/set-password?token=%s", user.email, cfg.base_url, token)
 
 
 def start_scheduler():
     from apscheduler.schedulers.background import BackgroundScheduler
 
-    from .. import mailer, reminders
+    from .. import export, insights, mailer, reminders, site_settings
 
     def flush():
         with database.session_scope() as db:
             mailer.flush_outbox(db)
+        with database.session_scope() as db:
+            insights.flush_webhooks(db)
+
+    def pending_export():
+        """Automatic GitHub export after a publication (Settings > Integrations)."""
+        with database.session_scope() as db:
+            if not site_settings.get(db, "export_pending") or not get_config().github_enabled:
+                return
+            try:
+                sha = export.push_github(export.build(db), "Promulga: automatic export after publication")
+                site_settings.set_many(db, {"export_pending": False,
+                                            "last_export": f"{date.today()} {sha[:10] or 'no change'}"})
+            except export.ExportError as exc:
+                log.error("Automatic export failed: %s", exc)
 
     def daily():
         with database.session_scope() as db:
@@ -99,6 +127,7 @@ def start_scheduler():
     scheduler = BackgroundScheduler(daemon=True)
     scheduler.add_job(flush, "interval", seconds=60, id="outbox", max_instances=1, coalesce=True)
     scheduler.add_job(daily, "interval", minutes=10, id="reminders", max_instances=1, coalesce=True)
+    scheduler.add_job(pending_export, "interval", minutes=2, id="export", max_instances=1, coalesce=True)
     scheduler.start()
     return scheduler
 
@@ -122,6 +151,8 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                        max_age=60 * 60 * 12, same_site="lax", https_only=cfg.secure_cookies)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     app.include_router(auth.router)
+    app.include_router(api.router)
+    app.include_router(oo.router)
     app.include_router(admin.router)
     app.include_router(portal.router)
 
@@ -132,6 +163,11 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     @app.exception_handler(LoginRequired)
     async def _login_required(request: Request, exc: LoginRequired):
         return RedirectResponse(login_url(exc.next_url), status_code=303)
+
+    @app.exception_handler(MustChangePassword)
+    async def _must_change(request: Request, exc: MustChangePassword):
+        flash(request, "Please choose a new password before continuing.", "error")
+        return RedirectResponse("/admin/account", status_code=303)
 
     @app.exception_handler(CsrfError)
     async def _csrf(request: Request, exc: CsrfError):

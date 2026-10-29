@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ doc.ref }} - online editor - {{ site.site_name }}</title>
+  <link rel="stylesheet" href="/static/promulga.css?v={{ app_version }}">
+  <link rel="stylesheet" href="/theme.css">
+  <style> html, body { height: 100%; } body { display: flex; flex-direction: column; } #editor-wrap { flex: 1; } </style>
+</head>
+<body>
+  <nav class="navbar" aria-label="Editor">
+    <div class="navbar-inner">
+      <a class="brand" href="/admin/documents/{{ doc.id }}"><img src="/static/promulga-mark.svg" alt=""> {{ doc.ref }} - {{ doc.title }}</a>
+      <div class="nav-links"><span class="badge-env">{{ doc.status }}</span><a href="/admin/documents/{{ doc.id }}">Back to the document</a></div>
+    </div>
+  </nav>
+  <div id="editor-wrap"><div id="editor"></div></div>
+  <noscript><p class="container">The online editor needs JavaScript.</p></noscript>
+  <script src="{{ api_js }}"></script>
+  <script>
+    // Configuration signed by Promulga (JWT): the editor server refuses any change to it.
+    var config = {{ config | tojson }};
+    if (window.DocsAPI) {
+      new DocsAPI.DocEditor("editor", config);
+    } else {
+      document.getElementById("editor").innerHTML =
+        '<div class="container"><div class="flash flash-error">The editor server is not reachable. ' +
+        'Check that the "onlyoffice" container runs (docker compose --profile editor up -d).</div></div>';
+    }
+  </script>
+</body>
+</html>

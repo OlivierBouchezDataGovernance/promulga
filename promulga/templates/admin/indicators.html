@@ -1,0 +1,55 @@
+{% extends "admin/base.html" %}
+{% from "admin/_macros.html" import status, due with context %}
+{% block title %}Indicators - {{ site.site_name }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="container">
+  <h1>Indicators</h1>
+  <form class="filters" method="get" action="/admin/indicators">
+    <div><label for="months">Period</label><select id="months" name="months" onchange="this.form.submit()">
+      {% for m in [3, 6, 12, 24] %}<option value="{{ m }}" {{ 'selected' if m == k.months }}>last {{ m }} months</option>{% endfor %}</select></div>
+  </form>
+</div></div>
+<section class="section"><div class="container">
+  <div class="grid">
+    <div class="card"><div class="card-meta">Documents</div><h2 style="font-size:2rem;margin:0">{{ k.total }}</h2>
+      <p class="small muted">{% for s, n in k.by_status.items() if n %}{{ status(s) }} {{ n }} {% endfor %}</p></div>
+    <div class="card"><div class="card-meta">Published in the period</div><h2 style="font-size:2rem;margin:0">{{ k.published_period }}</h2>
+      <p class="small muted">Average cycle draft &rarr; publication: <strong>{{ k.avg_cycle_days if k.avg_cycle_days is not none else '-' }}</strong> day(s)</p></div>
+    <div class="card"><div class="card-meta">Overdue now</div><h2 style="font-size:2rem;margin:0" class="{{ 'late' if k.overdue }}">{{ k.overdue | length }}</h2>
+      <p class="small muted">stages past their deadline</p></div>
+    <div class="card"><div class="card-meta">Periodic reviews (30 days)</div><h2 style="font-size:2rem;margin:0">{{ k.reviews_due | length }}</h2>
+      <p class="small muted">published documents to re-examine</p></div>
+  </div>
+
+  <div class="card">
+    <h2>Stages</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Stage</th><th>Completed</th><th>Average duration</th><th>On time</th><th>In progress</th></tr></thead>
+      <tbody>{% for stage, s in k.per_stage.items() %}
+        <tr><td>{{ status(stage) }}</td><td>{{ s.completed }}</td>
+          <td>{{ s.avg_days if s.avg_days is not none else '-' }} day(s) <span class="hint">(target {{ site.stage_days[stage] }})</span></td>
+          <td>{% if s.on_time_pct is not none %}
+            <div style="display:flex;align-items:center;gap:.5rem"><div style="flex:1;max-width:160px;height:8px;background:var(--surface-alt);border-radius:4px;overflow:hidden">
+              <div style="height:8px;width:{{ s.on_time_pct }}%;background:{{ 'var(--st-published)' if s.on_time_pct >= 80 else ('var(--st-review)' if s.on_time_pct >= 50 else 'var(--c-danger)') }}"></div></div>{{ s.on_time_pct }} %</div>
+            {% else %}-{% endif %}</td>
+          <td>{{ s.open }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+    <p class="hint">Measured from the stage history recorded since version 0.2.</p>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <h2>Reviews due</h2>
+      {% for d in k.reviews_due %}<p class="small"><a href="/admin/documents/{{ d.id }}">{{ d.ref }} {{ d.title }}</a> - <span class="{{ 'late' if d.review_overdue }}">{{ d.next_review | fdate }}</span> - {{ d.owner.display }}</p>
+      {% else %}<p class="empty">None in the next 30 days.</p>{% endfor %}
+      <h2 style="margin-top:1rem">Overdue stages by owner</h2>
+      {% for owner, n in k.late_by_owner %}<p class="small">{{ owner }}: <strong>{{ n }}</strong></p>{% else %}<p class="empty">None.</p>{% endfor %}
+    </div>
+    <div class="card">
+      <h2>Read &amp; acknowledge</h2>
+      {% for a in k.acknowledgments %}<p class="small"><a href="/admin/documents/{{ a.doc.id }}">{{ a.doc.ref }}</a> v{{ a.doc.current_version }}: {{ a.done }}/{{ a.audience }} ({{ a.pct }} %)</p>
+      {% else %}<p class="empty">No document asks for an acknowledgment.</p>{% endfor %}
+    </div>
+  </div>
+</div></section>
+{% endblock %}

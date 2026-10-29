@@ -13,14 +13,14 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import FileResponse, PlainTextResponse, Response
 from sqlalchemy.orm import Session, selectinload
 
-from .. import site_settings, storage
+from .. import naming, site_settings, storage, workflow
 from ..db import get_db
-from ..models import RETIRED, Document, Publication, Taxonomy, Term, User
-from .deps import LoginRequired, current_user, render
+from ..models import RETIRED, Acknowledgment, Document, Publication, Taxonomy, Term, User
+from .deps import LoginRequired, csrf_protect, current_user, flash, redirect, render
 
 router = APIRouter()
 
@@ -167,7 +167,30 @@ def document_page(ref: str, request: Request, db: Session = Depends(get_db),
     doc = db.query(Document).filter_by(ref=ref).first()
     if doc is None or not doc.current_version:
         raise HTTPException(404)
-    return render(request, db, "portal/document.html", user=user, doc=doc, retired=doc.status == RETIRED)
+    acknowledged = None
+    if doc.ack_required and user and doc.latest_publication:
+        acknowledged = db.query(Acknowledgment).filter_by(publication_id=doc.latest_publication.id,
+                                                          user_id=user.id).first()
+    return render(request, db, "portal/document.html", user=user, doc=doc, retired=doc.status == RETIRED,
+                  acknowledged=acknowledged)
+
+
+@router.post("/d/{ref}/acknowledge", dependencies=[Depends(csrf_protect)])
+def acknowledge(ref: str, request: Request, db: Session = Depends(get_db),
+                user: User | None = Depends(current_user)):
+    if user is None:
+        raise LoginRequired(f"/d/{ref}")
+    doc = db.query(Document).filter_by(ref=ref).first()
+    if doc is None:
+        raise HTTPException(404)
+    try:
+        workflow.acknowledge(db, user, doc)
+        db.commit()
+        flash(request, "Thank you: your acknowledgment is recorded.", "success")
+    except workflow.WorkflowError as exc:
+        db.rollback()
+        flash(request, str(exc), "error")
+    return redirect(f"/d/{ref}")
 
 
 @router.get("/d/{ref}/v{version}.pdf")
@@ -179,7 +202,8 @@ def document_pdf(ref: str, version: str, download: bool = False, db: Session = D
     pub = next((p for p in doc.publications if p.version == version), None)
     if pub is None:
         raise HTTPException(404)
-    name = f"{doc.ref} - {pub.title} - v{pub.version}.pdf"
+    name = naming.file_name(doc, ".pdf", site_settings.get_all(db), version=pub.version, draft=False,
+                            published=pub.published_at)
     return FileResponse(storage.absolute(pub.pdf_path), media_type="application/pdf", filename=name,
                         content_disposition_type="attachment" if download else "inline")
 

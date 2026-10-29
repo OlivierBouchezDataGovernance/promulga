@@ -1,0 +1,17 @@
+{% extends "admin/base.html" %}
+{% block title %}Security checks - {{ site.site_name }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="container">
+  <h1>Security checks</h1>
+  <p class="muted">What the application can verify by itself. On the server, also run <code>deploy/check.sh</code>: it checks the permissions of <code>.env</code> and <code>secrets/</code>, which the application cannot see.</p>
+</div></div>
+<section class="section"><div class="container">
+  <div class="table-wrap"><table>
+    <thead><tr><th style="width:110px">Status</th><th>Check</th><th>Detail</th></tr></thead>
+    <tbody>{% for c in checks %}
+      <tr><td>{% if c.ok is sameas true %}<span class="status status-Published">OK</span>{% elif c.ok is sameas false %}<span class="status status-Revision">To fix</span>{% else %}<span class="status">Info</span>{% endif %}</td>
+        <td><strong>{{ c.title }}</strong></td><td class="small">{{ c.detail }}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+</div></section>
+{% endblock %}

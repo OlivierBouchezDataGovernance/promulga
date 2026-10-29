@@ -7,13 +7,13 @@
       <span>{{ site.site_name }}</span>
     </a>
     <div class="nav-links">
-      <a href="/">Home</a>
-      <a href="/search">Search</a>
-      {% if user and user.role != 'viewer' %}<a href="/admin">Workspace</a>{% endif %}
+      <a href="/">{{ _("Home") }}</a>
+      <a href="/search">{{ _("Search") }}</a>
+      {% if user and user.role != 'viewer' %}<a href="/admin">{{ _("Workspace") }}</a>{% endif %}
       {% if user %}
-        <form method="post" action="/auth/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="linklike" type="submit">Sign out</button></form>
+        <form method="post" action="/auth/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="linklike" type="submit">{{ _("Sign out") }}</button></form>
       {% else %}
-        <a href="/auth/login?next={{ request.url.path | urlencode }}">Sign in</a>
+        <a href="/auth/login?next={{ request.url.path | urlencode }}">{{ _("Sign in") }}</a>
       {% endif %}
     </div>
   </div>

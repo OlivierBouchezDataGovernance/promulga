@@ -4,7 +4,8 @@
 <div class="page-head"><div class="container">
   <h1>Taxonomies and tags</h1>
   <p class="muted">Each taxonomy is a navigation hierarchy of the portal (for example Domain, Regulation, Audience).
-    Tags can be nested: a document tagged "Data quality" also appears under its parent "Data governance".</p>
+    Tags can be nested: a document tagged "Data quality" also appears under its parent "Data governance".
+    The <strong>code</strong> is used in file names, e.g. <code>{CODE:domain}</code>. The tag <code>{{ cfg_export_tag }}</code> marks documents for the public export.</p>
 </div></div>
 <section class="section"><div class="container">
   {% for tax in taxonomies %}
@@ -19,12 +20,13 @@
     </form>
     <p class="small muted">Portal address: <a href="/browse/{{ tax.slug }}">/browse/{{ tax.slug }}</a></p>
     <div class="table-wrap"><table>
-      <thead><tr><th>Tag</th><th>Parent</th><th>Order</th><th></th></tr></thead>
+      <thead><tr><th>Tag</th><th>Code</th><th>Parent</th><th>Order</th><th></th></tr></thead>
       <tbody>
       {% for t in tax.terms %}
         {% set f = 'term-' ~ t.id %}
         <tr>
           <td><input form="{{ f }}" type="text" name="name" value="{{ t.name }}" aria-label="Tag name"></td>
+          <td style="width:110px"><input form="{{ f }}" type="text" name="code" value="{{ t.code }}" maxlength="20" aria-label="Code" placeholder="e.g. DG"></td>
           <td><select form="{{ f }}" name="parent_id" aria-label="Parent"><option value="">(top level)</option>
             {% for p in tax.terms if p.id != t.id %}<option value="{{ p.id }}" {{ 'selected' if p.id == t.parent_id }}>{{ p.name }}</option>{% endfor %}</select></td>
           <td style="width:90px"><input form="{{ f }}" type="number" name="sort" value="{{ t.sort }}" aria-label="Order"></td>
@@ -32,12 +34,13 @@
             <button class="btn btn-sm btn-outline" type="submit">Save</button>
             <button class="btn btn-sm btn-danger" type="submit" name="delete" value="1" onclick="return confirm('Delete the tag {{ t.name }}?')">Delete</button></form></td>
         </tr>
-      {% else %}<tr><td colspan="4" class="empty">No tag yet.</td></tr>{% endfor %}
+      {% else %}<tr><td colspan="5" class="empty">No tag yet.</td></tr>{% endfor %}
       </tbody>
     </table></div>
     <form method="post" action="/admin/taxonomies/{{ tax.id }}/terms" class="row" style="align-items:end;margin-top:.75rem">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <div><label>New tag</label><input type="text" name="name" required></div>
+      <div style="flex:0 0 110px"><label>Code</label><input type="text" name="code" maxlength="20" placeholder="DG"></div>
       <div><label>Under</label><select name="parent_id"><option value="">(top level)</option>
         {% for p in tax.terms %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}</select></div>
       <div style="flex:2"><label>Description <span class="hint">(optional)</span></label><input type="text" name="description"></div>

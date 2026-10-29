@@ -1,9 +1,13 @@
-# Promulga: application + PDF conversion (Gotenberg) + HTTPS reverse proxy (Caddy).
+# Promulga: application + PDF conversion (Gotenberg) + HTTPS reverse proxy (Caddy)
+# + optional online editor (OnlyOffice, profile "editor").
 #
-#   cp .env.example .env   # then edit it
-#   docker compose up -d --build
+#   ./deploy/setup.sh                              # creates .env and secrets/ with safe permissions
+#   docker compose up -d --build                   # without the online editor
+#   docker compose --profile editor up -d --build  # with the online editor (needs ~2 GB of RAM more)
 #
-# Data (database, files, images) lives in the "promulga-data" volume.
+# Data (database, files, images, signing key) lives in the "promulga-data" volume.
+# Secrets are files in ./secrets (mode 600), mounted read-only in /run/secrets:
+# they never appear in "docker inspect" nor in .env.
 
 services:
   app:
@@ -14,6 +18,15 @@ services:
     environment:
       PROMULGA_DATA_DIR: /data
       GOTENBERG_URL: http://gotenberg:3000
+      SMTP_PASSWORD_FILE: /run/secrets/smtp_password
+      GITHUB_TOKEN_FILE: /run/secrets/github_token
+      OIDC_CLIENT_SECRET_FILE: /run/secrets/oidc_client_secret
+      ONLYOFFICE_JWT_SECRET_FILE: /run/secrets/onlyoffice_jwt_secret
+      SIGNING_CERT_PASSWORD_FILE: /run/secrets/signing_cert_password
+      ONLYOFFICE_URL: ${ONLYOFFICE_URL:-}
+      ONLYOFFICE_INTERNAL_URL: http://onlyoffice
+      PROMULGA_INTERNAL_URL: http://app:8000
+    secrets: [smtp_password, github_token, oidc_client_secret, onlyoffice_jwt_secret, signing_cert_password]
     volumes:
       - promulga-data:/data
     depends_on:
@@ -25,13 +38,28 @@ services:
     restart: unless-stopped
     command: ["gotenberg", "--chromium-disable-javascript=true", "--api-timeout=120s"]
 
+  onlyoffice:
+    # Online editor (single shared version, comments of all reviewers in one file).
+    # Community edition: free, up to 20 simultaneous editors. Reached by browsers at /onlyoffice.
+    image: onlyoffice/documentserver:8.2
+    profiles: ["editor"]
+    restart: unless-stopped
+    environment:
+      JWT_ENABLED: "true"
+      JWT_SECRET_FILE: /run/secrets/onlyoffice_jwt_secret
+      ALLOW_PRIVATE_IP_ADDRESS: "true"   # lets it download files from the app container
+    entrypoint: ["/bin/sh", "-c", "export JWT_SECRET=$$(cat /run/secrets/onlyoffice_jwt_secret) && exec /app/ds/run-document-server.sh"]
+    secrets: [onlyoffice_jwt_secret]
+    volumes:
+      - onlyoffice-data:/var/www/onlyoffice/Data
+
   caddy:
     # Automatic HTTPS (Let's Encrypt) for SITE_DOMAIN. Use SITE_DOMAIN=:80 for plain HTTP tests.
     image: caddy:2.8
     restart: unless-stopped
     ports:
-      - "80:80"
-      - "443:443"
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
     environment:
       SITE_DOMAIN: ${SITE_DOMAIN:-:80}
     volumes:
@@ -41,7 +69,20 @@ services:
     depends_on:
       - app
 
+secrets:
+  smtp_password:
+    file: ./secrets/smtp_password
+  github_token:
+    file: ./secrets/github_token
+  oidc_client_secret:
+    file: ./secrets/oidc_client_secret
+  onlyoffice_jwt_secret:
+    file: ./secrets/onlyoffice_jwt_secret
+  signing_cert_password:
+    file: ./secrets/signing_cert_password
+
 volumes:
   promulga-data:
+  onlyoffice-data:
   caddy-data:
   caddy-config:

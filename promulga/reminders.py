@@ -17,7 +17,7 @@ from datetime import date, datetime
 from sqlalchemy.orm import Session
 
 from . import mailer, site_settings
-from .models import ACTIVE_STATUSES, ROLE_MANAGER, ROLES, Document, ReminderLog, User
+from .models import ACTIVE_STATUSES, PUBLISHED, ROLE_MANAGER, ROLES, Document, ReminderLog, User
 from .workflow import doc_link, pending_users
 
 log = logging.getLogger(__name__)
@@ -70,6 +70,24 @@ def run(db: Session, today: date | None = None) -> int:
                                stage_started_at=doc.stage_started_at, sent_on=today))
             per_user[user.id].append((doc, kind))
             users[user.id] = user
+            if user.is_absent and user.deputy and user.deputy.active:   # the deputy is reminded too
+                per_user[user.deputy.id].append((doc, kind))
+                users[user.deputy.id] = user.deputy
+
+    # Periodic review of published documents: owner warned before, then while overdue.
+    review_days = int(site.get("review_reminder_days") or 0)
+    reviews_due: list[Document] = []
+    for doc in db.query(Document).filter(Document.status == PUBLISHED, Document.next_review.isnot(None)).all():
+        days_left = (doc.next_review - today).days
+        if days_left > review_days:
+            continue
+        reviews_due.append(doc)
+        kind = "review"
+        if _should_send(db, doc, doc.owner, kind, today, repeat if days_left < 0 else 0) and doc.owner.active:
+            db.add(ReminderLog(document_id=doc.id, user_id=doc.owner_id, kind=kind,
+                               stage_started_at=doc.stage_started_at, sent_on=today))
+            per_user[doc.owner_id].append((doc, kind))
+            users[doc.owner_id] = doc.owner
 
     queued = 0
     for user_id, items in per_user.items():
@@ -80,12 +98,13 @@ def run(db: Session, today: date | None = None) -> int:
                      items=[_item(doc, kind, today) for doc, kind in items])
         queued += 1
 
-    if site.get("manager_digest") and overdue_docs:
+    if site.get("manager_digest") and (overdue_docs or reviews_due):
         managers = [u for u in db.query(User).filter(User.active.is_(True)).all()
                     if ROLES.index(u.role) >= ROLES.index(ROLE_MANAGER)]
         items = [_item(doc, "overdue", today, with_people=True) for doc in overdue_docs]
+        items += [_item(doc, "review", today, with_people=True) for doc in reviews_due]
         for manager in managers:
-            mailer.queue(db, manager.email, f"Overdue documents: {len(items)}", "reminder.html", site,
+            mailer.queue(db, manager.email, f"Overdue stages and reviews due: {len(items)}", "reminder.html", site,
                          user=manager, items=items, manager=True)
             queued += 1
     log.info("Reminders: %s e-mail(s) queued", queued)
@@ -104,10 +123,13 @@ def _should_send(db: Session, doc: Document, user: User, kind: str, today: date,
 
 
 def _item(doc: Document, kind: str, today: date, with_people: bool = False) -> dict:
+    due = doc.next_review if kind == "review" else doc.stage_due
     return {
         "ref": doc.ref, "title": doc.title, "status": doc.status, "link": doc_link(doc),
-        "due": doc.stage_due.isoformat(), "kind": kind,
-        "days": abs((doc.stage_due - today).days),
-        "expected": EXPECTED.get(doc.status, "act"),
-        "waiting_for": ", ".join(u.display for u in pending_users(doc)) if with_people else "",
+        "due": due.isoformat(), "kind": "overdue" if kind == "review" and due < today else kind,
+        "days": abs((due - today).days), "review": kind == "review",
+        "expected": ("review it and ask a Document Manager to start a new revision (or confirm it unchanged)"
+                     if kind == "review" else EXPECTED.get(doc.status, "act")),
+        "waiting_for": (doc.owner.display if kind == "review" else
+                        ", ".join(u.display for u in pending_users(doc))) if with_people else "",
     }

@@ -30,8 +30,8 @@ def init_engine(database_url: str):
             cur.execute("PRAGMA journal_mode=WAL")
             cur.close()
     _SessionLocal = sessionmaker(bind=_engine, expire_on_commit=False)
-    from . import models  # noqa: F401  (registers the tables)
-    Base.metadata.create_all(_engine)
+    from . import migrate, models  # noqa: F401  (models registers the tables)
+    migrate.upgrade(_engine)
     return _engine
 
 

@@ -30,6 +30,7 @@ def db(app_env):
     from promulga.web.app import bootstrap_admin
     database.init_engine(app_env.database_url)
     bootstrap_admin(app_env)
+    _clear_forced_change()
     with database.session_scope() as session:
         yield session
 
@@ -40,7 +41,17 @@ def client(app_env):
 
     from promulga.web.app import create_app
     with TestClient(create_app(app_env)) as c:
+        _clear_forced_change()
         yield c
+
+
+def _clear_forced_change():
+    """ADMIN_PASSWORD makes the first admin change it at first sign-in; most tests skip that step."""
+    from promulga import db as database
+    from promulga.models import User
+    with database.session_scope() as db:
+        for u in db.query(User).all():
+            u.must_change_password = False
 
 
 def make_pdf(text: str = "Hello") -> bytes:

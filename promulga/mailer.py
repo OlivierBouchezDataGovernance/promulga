@@ -18,6 +18,7 @@ from email.utils import formataddr
 from jinja2 import Environment, PackageLoader, select_autoescape
 from sqlalchemy.orm import Session
 
+from . import i18n
 from .config import get_config
 from .models import OutboxMail, utcnow
 
@@ -25,6 +26,7 @@ log = logging.getLogger(__name__)
 
 _env = Environment(loader=PackageLoader("promulga", "templates/email"),
                    autoescape=select_autoescape(["html"]))
+i18n.install(_env)
 
 MAX_ATTEMPTS = 5
 

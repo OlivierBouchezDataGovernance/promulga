@@ -64,6 +64,12 @@
           <div><label for="hour">Hour of the reminders <span class="hint">(server time, 0-23)</span></label>
             <input id="hour" type="number" min="0" max="23" name="reminder_hour" value="{{ site.reminder_hour }}"></div>
         </div>
+        <div class="row">
+          <div><label for="review_months">Periodic review of published documents, every N months <span class="hint">(0 = none; overridable per document)</span></label>
+            <input id="review_months" type="number" min="0" max="120" name="review_months" value="{{ site.review_months }}"></div>
+          <div><label for="review_reminder_days">Warn the owner N days before the review is due</label>
+            <input id="review_reminder_days" type="number" min="0" max="365" name="review_reminder_days" value="{{ site.review_reminder_days }}"></div>
+        </div>
         <label class="check"><input type="checkbox" name="manager_digest" value="1" {{ 'checked' if site.manager_digest }}> Daily summary of overdue stages to the Document Managers</label>
         <label class="check"><input type="checkbox" name="notify_on_publish" value="1" {{ 'checked' if site.notify_on_publish }}> E-mail all participants when a version is published</label>
       </fieldset>
@@ -86,6 +92,19 @@
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <button class="btn btn-sm btn-outline" type="submit">Send today's reminders now</button>
       <span class="hint">Useful for testing; reminders already sent today for the same stage are not repeated.</span>
+    </form>
+  </div>
+
+  <div class="card" id="integrations">
+    <h2>Integrations</h2>
+    <form method="post" action="/admin/settings/integrations">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label for="webhooks">Webhook URLs <span class="hint">(one per line, https only; Microsoft Teams, Slack or any JSON endpoint receives {"text": ...} at every workflow event)</span></label>
+      <textarea id="webhooks" name="webhook_urls" rows="3" style="font-family:monospace">{{ site.webhook_urls | join('\n') }}</textarea>
+      <label class="check"><input type="checkbox" name="export_auto" value="1" {{ 'checked' if site.export_auto }}> Push the public package to GitHub automatically after each publication</label>
+      <div class="actions"><button class="btn" type="submit">Save integrations</button>
+        <button class="btn btn-outline" type="submit" name="test" value="1">Save and send a test message</button>
+        <a href="/admin/export">Public export</a> - <a href="/admin/api-tokens">API tokens</a></div>
     </form>
   </div>
 

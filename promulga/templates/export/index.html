@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ site.site_name }} - published governance documents</title>
+<meta name="description" content="{{ site.tagline }}">
+<meta name="generator" content="Promulga {{ version }}">
+<link rel="alternate" type="application/ld+json" href="catalogue.jsonld" title="DCAT-AP catalogue">
+<style>
+  :root { --primary: {{ site.color_primary }}; --dark: {{ site.color_primary_dark }}; --accent: {{ site.color_accent }};
+    --on-accent: {{ site.color_on_accent }}; --ok: {{ site.color_success }}; --text: {{ site.color_text }};
+    --bg: {{ site.color_background }}; --border: #e2e8f0; --muted: #475569; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.6 Inter, "Segoe UI", system-ui, Arial, sans-serif; color: var(--text); background: var(--bg); }
+  header { background: linear-gradient(160deg, var(--primary), var(--dark)); color: #fff; }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 0 1.25rem; }
+  header .wrap { padding-top: 2.25rem; padding-bottom: 2rem; }
+  .brand { display: flex; align-items: center; gap: .6rem; font-weight: 700; }
+  .brand svg, .brand img { width: 34px; height: 34px; }
+  h1 { margin: 1.25rem 0 .25rem; font-size: 2rem; letter-spacing: -.02em; }
+  header p { color: #cbd5e1; margin: 0 0 1.25rem; }
+  input[type=search] { width: 100%; max-width: 560px; padding: .75rem 1rem; border: 0; border-radius: 10px; font: inherit; }
+  main { padding: 1.75rem 0 2rem; }
+  .doc { background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 1.1rem 1.25rem; margin-bottom: 1rem;
+    display: grid; grid-template-columns: auto 1fr; gap: 1rem; }
+  .badge { width: 40px; height: 40px; border-radius: 10px; background: #f1f5f9; color: var(--primary); display: grid; place-items: center; }
+  .meta { font-size: .75rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; }
+  h2 { margin: .15rem 0 .35rem; font-size: 1.1rem; color: var(--primary); }
+  .seal { display: inline-block; background: #d1fae5; color: #065f46; border-radius: 999px; padding: .05rem .6rem; font-size: .78rem; font-weight: 600; }
+  .tag { display: inline-block; border: 1px solid var(--border); border-radius: 999px; padding: 0 .55rem; font-size: .75rem; color: var(--muted); margin: .15rem .2rem 0 0; }
+  a.btn { display: inline-block; background: var(--accent); color: var(--on-accent); padding: .45rem .9rem; border-radius: 8px; font-weight: 600; text-decoration: none; font-size: .88rem; }
+  details { margin-top: .5rem; font-size: .85rem; } summary { cursor: pointer; color: var(--muted); }
+  footer { color: var(--muted); font-size: .8rem; padding: 1rem 0 2.5rem; }
+  footer a { color: var(--muted); }
+  .empty { color: var(--muted); font-style: italic; }
+</style>
+</head>
+<body>
+<header><div class="wrap">
+  <div class="brand">{{ logo_html }} {{ site.site_name }}</div>
+  <h1>Published governance documents</h1>
+  <p>{{ site.tagline }}</p>
+  <input type="search" id="q" placeholder="Filter {{ documents | length }} document(s)" aria-label="Filter the documents">
+</div></header>
+<main class="wrap" id="list">
+  {% for d in documents %}
+  {% set cur = d.versions[0] %}
+  <article class="doc" data-text="{{ (d.ref ~ ' ' ~ d.title ~ ' ' ~ d.description ~ ' ' ~ d.type ~ ' ' ~ (d.tags | map(attribute='name') | join(' '))) | lower }}">
+    <div class="badge" title="{{ d.type }}">{{ icon(d.type_icon, 22) }}</div>
+    <div>
+      <div class="meta">{{ d.ref }} · {{ d.type }}</div>
+      <h2>{{ d.title }}</h2>
+      <p><span class="seal">Official version {{ d.version }} · in force since {{ d.published }}</span></p>
+      {% if d.description %}<p>{{ d.description }}</p>{% endif %}
+      <p><a class="btn" href="{{ cur.file }}">Read version {{ d.version }} (PDF)</a></p>
+      <div>{% for t in d.tags %}<span class="tag">{{ t.name }}</span>{% endfor %}</div>
+      <details><summary>Details and previous versions</summary>
+        <p>{% if d.owner %}Owner: {{ d.owner }}. {% endif %}Approved by {{ cur.approved_by }}.{% if d.next_review %} Next review: {{ d.next_review }}.{% endif %}<br>
+          SHA-256 of the current PDF: <code>{{ cur.sha256 }}</code>{% if cur.signed %} - electronically sealed{% endif %}</p>
+        <ul>{% for v in d.versions %}<li><a href="{{ v.file }}">Version {{ v.version }}</a> - {{ v.published }}{% if v.change_note %} - {{ v.change_note }}{% endif %}</li>{% endfor %}</ul>
+      </details>
+    </div>
+  </article>
+  {% else %}<p class="empty">No document is published here yet.</p>{% endfor %}
+</main>
+<footer class="wrap">
+  Generated on {{ generated }} by Promulga {{ version }}. Machine-readable catalogue: <a href="catalogue.jsonld">DCAT-AP</a>,
+  <a href="catalogue.json">JSON</a>, <a href="catalogue.csv">CSV</a>; checksums: <a href="SHA256SUMS">SHA256SUMS</a>.
+</footer>
+<script>
+  // Client-side filter; the page also works without JavaScript.
+  document.getElementById('q').addEventListener('input', function (e) {
+    var q = e.target.value.toLowerCase().trim();
+    document.querySelectorAll('.doc').forEach(function (el) {
+      el.style.display = !q || el.dataset.text.indexOf(q) >= 0 ? '' : 'none';
+    });
+  });
+</script>
+</body>
+</html>

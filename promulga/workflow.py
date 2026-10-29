@@ -28,12 +28,17 @@ from datetime import date, timedelta
 
 from sqlalchemy.orm import Session
 
-from . import mailer, pdf, site_settings, storage
+import json
+
+from sqlalchemy import func
+
+from . import docx_meta, mailer, naming, pdf, site_settings, storage
 from .accounts import participant
 from .config import get_config
 from .models import (
     ACTIVE_STATUSES, APPROVAL, APPROVER, DRAFT, PUBLISHED, RETIRED, REVIEW, REVIEWER, REVISION,
-    ROLE_MANAGER, Assignment, Comment, Document, Event, Publication, Revision, Term, User, utcnow,
+    ROLE_MANAGER, Acknowledgment, Assignment, Comment, Document, Event, Publication, Revision, StageLog, Term,
+    User, WebhookDelivery, utcnow,
 )
 
 
@@ -55,7 +60,9 @@ def is_participant(doc: Document, user: User) -> bool:
 
 def can_see(doc: Document, user: User) -> bool:
     """Access to the working area of a document (files, comments, history)."""
-    return is_manager(user) or is_participant(doc, user)
+    if is_manager(user) or is_participant(doc, user):
+        return True
+    return any(a.user.is_absent and a.user.deputy_id == user.id for a in doc.assignments)
 
 
 def pending_users(doc: Document) -> list[User]:
@@ -67,6 +74,25 @@ def pending_users(doc: Document) -> list[User]:
     if doc.status == APPROVAL:
         return [a.user for a in doc.approvers if a.acted_at is None]
     return []
+
+
+def acting_assignment(doc: Document, actor: User, role: str) -> Assignment | None:
+    """The assignment `actor` may act on: their own, or that of an absent person whose deputy they are."""
+    own = next((a for a in doc.people(role) if a.user_id == actor.id and a.acted_at is None), None)
+    if own:
+        return own
+    return next((a for a in doc.people(role) if a.acted_at is None and a.user.is_absent
+                 and a.user.deputy_id == actor.id), None)
+
+
+def segregation_warnings(doc: Document) -> list[str]:
+    """Segregation of duties: the owner should not review or approve their own document."""
+    out = []
+    if any(a.user_id == doc.owner_id for a in doc.approvers):
+        out.append("The owner is also an approver: segregation of duties is not respected.")
+    if any(a.user_id == doc.owner_id for a in doc.reviewers):
+        out.append("The owner is also a reviewer of their own document.")
+    return out
 
 
 def allowed_actions(doc: Document, user: User) -> set[str]:
@@ -81,10 +107,9 @@ def allowed_actions(doc: Document, user: User) -> set[str]:
         actions.add("release")
     if doc.status in ACTIVE_STATUSES and can_see(doc, user):
         actions.add("comment")
-    mine = [a for a in doc.assignments if a.user_id == user.id and a.acted_at is None]
-    if doc.status == REVIEW and any(a.role == REVIEWER for a in mine):
+    if doc.status == REVIEW and acting_assignment(doc, user, REVIEWER):
         actions.add("review_done")
-    if doc.status == APPROVAL and any(a.role == APPROVER for a in mine):
+    if doc.status == APPROVAL and acting_assignment(doc, user, APPROVER):
         actions |= {"approve", "reject"}
     if is_manager(user):
         actions.add("edit")
@@ -122,7 +147,8 @@ def _require_manager(actor: User) -> None:
 
 def create_document(db: Session, actor: User, *, title: str, doc_type: str, summary: str, owner_email: str,
                     reviewer_emails: list[str], approver_emails: list[str], term_ids: list[int],
-                    file: tuple[str, bytes] | None) -> Document:
+                    file: tuple[str, bytes] | None, review_months: int | None = None,
+                    ack_required: bool = False) -> Document:
     _require_manager(actor)
     site = site_settings.get_all(db)
     title = (title or "").strip()
@@ -131,28 +157,36 @@ def create_document(db: Session, actor: User, *, title: str, doc_type: str, summ
     prefix = site_settings.doc_type_prefix(site, doc_type)
 
     owner = participant(db, owner_email, actor, site)
-    doc = Document(ref=_next_ref(db, prefix), title=title, summary=(summary or "").strip(), doc_type=doc_type,
-                   owner=owner, status=DRAFT, next_version="1.0",
-                   stage_due=_due(site, DRAFT), stage_started_at=utcnow())
+    number = (db.query(func.max(Document.number)).scalar() or 0) + 1
+    doc = Document(number=number, ref=f"tmp-{number}", title=title, summary=(summary or "").strip(),
+                   doc_type=doc_type, owner=owner, status=DRAFT, next_version="1.0",
+                   change_note="Initial version", stage_due=_due(site, DRAFT), stage_started_at=utcnow(),
+                   review_months=review_months, ack_required=ack_required)
     db.add(doc)
     doc.terms = db.query(Term).filter(Term.id.in_(term_ids or [0])).all()
+    doc.ref = naming.build_ref(doc, prefix)
+    _require(db.query(Document).filter(Document.ref == doc.ref, Document.number != number).count() == 0,
+             f"The reference {doc.ref} already exists: check REF_PATTERN, it must contain {{ID}}.")
     _set_assignments(db, doc, reviewer_emails, approver_emails, actor, site)
     db.flush()
+    db.refresh(doc)
 
     if file is None and site.get("template_asset"):
         path = storage.asset_path(site["template_asset"])
         if path:
-            file = (f"{doc.ref} - {title}{path.suffix}", path.read_bytes())
-    if file is not None:
-        _store_revision(db, actor, doc, file[0], file[1], "Initial file")
+            file = (f"template{path.suffix}", path.read_bytes())
+    if file is None:   # no file, no template: a blank Word document with its cover page
+        file = ("document.docx", docx_meta.new_template(naming.values(doc, site=site), naming.LABELS))
+    _store_revision(db, actor, doc, file[0], file[1], "Initial file")
 
     _log(db, doc, actor, "Created", "", DRAFT)
+    _open_stage(db, doc)
     _notify_stage(db, doc, site)
     return doc
 
 
 def update_metadata(db: Session, actor: User, doc: Document, *, title: str, summary: str,
-                    term_ids: list[int]) -> None:
+                    term_ids: list[int], review_months: int | None = None, ack_required: bool | None = None) -> None:
     _require_manager(actor)
     title = (title or "").strip()
     _require(bool(title), "The title is required.")
@@ -160,6 +194,9 @@ def update_metadata(db: Session, actor: User, doc: Document, *, title: str, summ
     doc.title = title
     doc.summary = (summary or "").strip()
     doc.terms = db.query(Term).filter(Term.id.in_(term_ids or [0])).all()
+    doc.review_months = review_months
+    if ack_required is not None:
+        doc.ack_required = ack_required
     _log(db, doc, actor, "Metadata changed", doc.status, doc.status, f"Before: {before}")
 
 
@@ -233,12 +270,30 @@ def check_in(db: Session, actor: User, doc: Document, filename: str, data: bytes
     return revision
 
 
-def _store_revision(db: Session, actor: User, doc: Document, filename: str, data: bytes, note: str) -> Revision:
+def save_online(db: Session, user: User | None, doc: Document, data: bytes) -> Revision:
+    """Stores the file saved by the online editor as a new revision (any active stage: comments of
+    reviewers are part of the file). The Word cover page is refreshed at check-in and publication only,
+    so open editing sessions are never invalidated."""
+    _require_status(doc, *ACTIVE_STATUSES)
+    filename = doc.latest_revision.filename if doc.latest_revision else "document.docx"
+    actor = user or doc.owner
+    revision = _store_revision(db, actor, doc, filename, data, "Saved from the online editor", refresh=False)
+    _log(db, doc, actor, f"Online editor saved revision {revision.number}", doc.status, doc.status)
+    return revision
+
+
+def _store_revision(db: Session, actor: User, doc: Document, filename: str, data: bytes, note: str,
+                    refresh: bool = True) -> Revision:
     filename = storage.safe_filename(filename)
     _require(storage.extension(filename) in storage.ALLOWED_EXTENSIONS,
              f"File type not accepted. Allowed: {', '.join(sorted(storage.ALLOWED_EXTENSIONS))}.")
     max_bytes = get_config().max_upload_mb * 1024 * 1024
     _require(0 < len(data) <= max_bytes, f"The file is empty or larger than {get_config().max_upload_mb} MB.")
+    if refresh and docx_meta.supports_metadata(filename):
+        try:
+            data = refresh_docx(db, doc, data)
+        except Exception as exc:  # a damaged .docx is still stored, as uploaded
+            _log(db, doc, actor, "Word metadata not applied", doc.status, doc.status, str(exc)[:300])
     path, digest = storage.save_bytes(str(doc.id), filename, data)
     number = max((r.number for r in doc.revisions), default=0) + 1
     revision = Revision(document=doc, number=number, filename=filename,
@@ -248,6 +303,25 @@ def _store_revision(db: Session, actor: User, doc: Document, filename: str, data
     db.flush()
     db.refresh(doc)
     return revision
+
+
+def history_rows(doc: Document, upcoming: dict | None = None) -> list[dict[str, str]]:
+    """Version history for the cover page: published versions, oldest first, plus `upcoming`."""
+    rows = [{"version": p.version, "date": p.published_at.isoformat(), "author": doc.owner.display,
+             "note": p.change_note, "approved_by": p.approved_by} for p in reversed(doc.publications)]
+    if upcoming:
+        rows.append(upcoming)
+    return rows
+
+
+def refresh_docx(db: Session, doc: Document, data: bytes, version: str | None = None,
+                 published: date | None = None, upcoming: dict | None = None) -> bytes:
+    """Fills the Word variables and (re)builds the cover page of a .docx."""
+    site = site_settings.get_all(db)
+    vals = naming.values(doc, version, site, published)
+    if published:
+        vals["STATUS"] = PUBLISHED
+    return docx_meta.update_docx(data, vals, naming.LABELS, history_rows(doc, upcoming))
 
 
 def _content_type(filename: str) -> str:
@@ -321,11 +395,12 @@ def submit(db: Session, actor: User, doc: Document) -> None:
 
 def review_done(db: Session, actor: User, doc: Document, note: str = "") -> None:
     _require_status(doc, REVIEW)
-    mine = next((a for a in doc.reviewers if a.user_id == actor.id), None)
+    own = next((a for a in doc.reviewers if a.user_id == actor.id), None)
+    _require(not (own and own.acted_at), "You already marked your review as done.")
+    mine = acting_assignment(doc, actor, REVIEWER)
     _require(mine is not None, f"You are not a reviewer of {doc.ref}.")
-    _require(mine.acted_at is None, "You already marked your review as done.")
     mine.acted_at = utcnow()
-    _log(db, doc, actor, "Review done", REVIEW, REVIEW, note)
+    _log(db, doc, actor, "Review done" + _on_behalf(mine, actor), REVIEW, REVIEW, note)
     _advance_if_complete(db, doc, actor)
 
 
@@ -339,28 +414,36 @@ def close_review(db: Session, actor: User, doc: Document, note: str = "") -> Non
 
 def approve(db: Session, actor: User, doc: Document, note: str = "") -> None:
     _require_status(doc, APPROVAL)
-    mine = next((a for a in doc.approvers if a.user_id == actor.id), None)
+    own = next((a for a in doc.approvers if a.user_id == actor.id), None)
+    _require(not (own and own.acted_at), "You already approved this version.")
+    mine = acting_assignment(doc, actor, APPROVER)
     _require(mine is not None, f"You are not an approver of {doc.ref}.")
-    _require(mine.acted_at is None, "You already approved this version.")
     mine.acted_at = utcnow()
-    _log(db, doc, actor, "Approved", APPROVAL, APPROVAL, note)
+    _log(db, doc, actor, "Approved" + _on_behalf(mine, actor), APPROVAL, APPROVAL, note)
     _advance_if_complete(db, doc, actor)
 
 
 def reject(db: Session, actor: User, doc: Document, note: str) -> None:
     _require_status(doc, APPROVAL)
-    _require(any(a.user_id == actor.id for a in doc.approvers), f"You are not an approver of {doc.ref}.")
+    mine = next((a for a in doc.approvers if a.user_id == actor.id), None) or acting_assignment(doc, actor, APPROVER)
+    _require(mine is not None, f"You are not an approver of {doc.ref}.")
     _require(bool((note or "").strip()), "Please explain why you reject the document.")
-    _move(db, doc, REVISION, actor, "Rejected", note.strip())
+    _move(db, doc, REVISION, actor, "Rejected" + _on_behalf(mine, actor), note.strip())
+
+
+def _on_behalf(assignment: Assignment, actor: User) -> str:
+    return "" if assignment.user_id == actor.id else f" (on behalf of {assignment.user.email})"
 
 
 def start_revision(db: Session, actor: User, doc: Document, bump: str, note: str = "") -> None:
     """Published/Retired -> Draft, targeting the next minor or major version."""
     _require_manager(actor)
     _require_status(doc, PUBLISHED, RETIRED)
+    _require(bool((note or "").strip()), "Describe what the new version will change (change note).")
     doc.next_version = bump_version(doc.current_version, bump)
+    doc.change_note = note.strip()[:2000]
     _move(db, doc, DRAFT, actor, f"New {'major' if bump == 'major' else 'minor'} revision started",
-          " ".join(p for p in [f"Target version {doc.next_version}.", note.strip()] if p))
+          f"Target version {doc.next_version}. {doc.change_note}")
 
 
 def retire(db: Session, actor: User, doc: Document, note: str = "") -> None:
@@ -385,8 +468,20 @@ def _move(db: Session, doc: Document, status: str, actor: User | None, action: s
         doc.checked_out_by_id = None
         doc.checked_out_at = None
     _log(db, doc, actor, action, previous, status, detail)
+    _open_stage(db, doc)
+    webhook(db, site, action, doc, actor, detail)
     if notify:
         _notify_stage(db, doc, site, action=action, actor=actor, detail=detail)
+
+
+def _open_stage(db: Session, doc: Document) -> None:
+    """Closes the open StageLog line of the document and opens one for its current stage."""
+    now = utcnow()
+    for row in db.query(StageLog).filter_by(document_id=doc.id, ended_at=None).all():
+        row.ended_at = now
+    if doc.status in ACTIVE_STATUSES:
+        db.add(StageLog(document_id=doc.id, stage=doc.status, started_at=now, due=doc.stage_due,
+                        owner_id=doc.owner_id))
 
 
 def _advance_if_complete(db: Session, doc: Document, actor: User, site: dict | None = None) -> None:
@@ -403,25 +498,124 @@ def _publish(db: Session, doc: Document, actor: User, site: dict) -> Publication
     _require(source is not None, "There is no file to publish.")
     version = normalise_version(doc.next_version) or "1.0"
     today = date.today()
+    approved_by = ", ".join(a.user.display for a in doc.approvers)
+    note = doc.change_note or ("Initial version" if not doc.publications else "")
+    upcoming = {"version": version, "date": today.isoformat(), "author": doc.owner.display, "note": note,
+                "approved_by": approved_by}
+    data = storage.read_bytes(source.storage_path)
     try:
-        raw_pdf = pdf.to_pdf(source.filename, storage.read_bytes(source.storage_path))
+        if docx_meta.supports_metadata(source.filename):
+            data = refresh_docx(db, doc, data, version=version, published=today, upcoming=upcoming)
+            raw_pdf = pdf.to_pdf(source.filename, data)
+        else:
+            vals = naming.values(doc, version, site, today)
+            vals["STATUS"] = PUBLISHED
+            raw_pdf = pdf.prepend(pdf.cover_pdf(vals, naming.LABELS, history_rows(doc, upcoming)),
+                                  pdf.to_pdf(source.filename, data))
     except pdf.ConversionError as exc:
         raise WorkflowError(f"Publication failed: {exc} Your approval was not recorded; try again later "
                             "or ask the owner to check in a PDF.") from exc
     label = f"{doc.ref} - {doc.title} - Version {version} - Published {today.isoformat()} - {site['site_name']}"
     final_pdf = pdf.stamp(raw_pdf, label)
+    signed = False
+    if get_config().sign_pdfs:
+        final_pdf = pdf.sign(final_pdf, f"{doc.ref} version {version} approved by {approved_by}")
+        signed = True
     path, digest = storage.save_bytes(f"{doc.id}/published", f"{doc.ref}-v{version}.pdf", final_pdf)
     publication = Publication(
         document=doc, version=version, published_at=today, pdf_path=path, sha256=digest,
         source_revision_id=source.id, title=doc.title, text=pdf.extract_text(final_pdf),
-        approved_by=", ".join(a.user.display for a in doc.approvers),
+        approved_by=approved_by, change_note=note, signed=signed,
     )
     db.add(publication)
     doc.current_version = version
     doc.published_at = today
+    doc.change_note = ""
+    months = doc.review_months if doc.review_months is not None else int(site.get("review_months") or 0)
+    doc.next_review = _add_months(today, months) if months > 0 else None
     _move(db, doc, PUBLISHED, actor, f"Published v{version}", f"sha256 {digest}", site=site)
     db.flush()
+    db.refresh(doc)          # publications are ordered newest first
+    if doc.ack_required:
+        _ask_acknowledgments(db, doc, site)
+    if site.get("export_auto"):
+        site_settings.set_many(db, {"export_pending": True})
     return publication
+
+
+def _add_months(d: date, months: int) -> date:
+    month = d.month - 1 + months
+    year, month = d.year + month // 12, month % 12 + 1
+    import calendar
+    return date(year, month, min(d.day, calendar.monthrange(year, month)[1]))
+
+
+# ---------------------------------------------------------------------------
+# Read & acknowledge
+# ---------------------------------------------------------------------------
+
+def acknowledgment_audience(db: Session) -> list[User]:
+    """Everybody with an active account is expected to acknowledge."""
+    return db.query(User).filter(User.active.is_(True)).order_by(User.email).all()
+
+
+def acknowledge(db: Session, user: User, doc: Document) -> None:
+    pub = doc.latest_publication
+    _require(doc.ack_required and pub is not None and doc.status != RETIRED,
+             "This document does not ask for an acknowledgment.")
+    if db.query(Acknowledgment).filter_by(publication_id=pub.id, user_id=user.id).first():
+        return
+    db.add(Acknowledgment(document_id=doc.id, publication_id=pub.id, user_id=user.id))
+    _log(db, doc, user, f"Acknowledged v{pub.version}", doc.status, doc.status)
+
+
+def acknowledgment_status(db: Session, doc: Document) -> dict:
+    pub = doc.latest_publication
+    audience = acknowledgment_audience(db)
+    if pub is None:
+        return {"publication": None, "done": [], "missing": audience, "rate": 0}
+    done_ids = {a.user_id: a for a in db.query(Acknowledgment).filter_by(publication_id=pub.id).all()}
+    done = [(u, done_ids[u.id]) for u in audience if u.id in done_ids]
+    missing = [u for u in audience if u.id not in done_ids]
+    return {"publication": pub, "done": done, "missing": missing,
+            "rate": round(100 * len(done) / len(audience)) if audience else 0}
+
+
+def _ask_acknowledgments(db: Session, doc: Document, site: dict, only: list[User] | None = None) -> int:
+    link = f"{get_config().base_url}/d/{doc.ref}"
+    people = only if only is not None else acknowledgment_audience(db)
+    for user in people:
+        mailer.queue(db, user.email, f"Please read {doc.ref} version {doc.current_version}", "notice.html", site,
+                     heading=f"{doc.ref} - {doc.title}",
+                     lines=[f"Version {doc.current_version} of this {doc.doc_type.lower()} is now in force.",
+                            "Please read it and confirm with the button 'I have read and understood' on its page."],
+                     button=("Read and acknowledge", link))
+    return len(people)
+
+
+def remind_acknowledgments(db: Session, actor: User, doc: Document) -> int:
+    _require_manager(actor)
+    missing = acknowledgment_status(db, doc)["missing"]
+    n = _ask_acknowledgments(db, doc, site_settings.get_all(db), missing)
+    _log(db, doc, actor, "Acknowledgment reminder", doc.status, doc.status, f"{n} person(s)")
+    return n
+
+
+# ---------------------------------------------------------------------------
+# Webhooks (Teams, Slack, any JSON endpoint)
+# ---------------------------------------------------------------------------
+
+def webhook(db: Session, site: dict, action: str, doc: Document, actor: User | None, detail: str = "") -> None:
+    urls = [u for u in site.get("webhook_urls") or [] if u.startswith("https://")]
+    if not urls:
+        return
+    who = actor.display if actor else "Promulga"
+    text = f"{doc.ref} {doc.title}: {action} by {who} (stage {doc.status}). {doc_link(doc)}"
+    payload = json.dumps({"text": text, "event": action, "stage": doc.status, "ref": doc.ref, "title": doc.title,
+                          "version": _version_label(doc), "actor": actor.email if actor else "", "detail": detail,
+                          "url": doc_link(doc)})
+    for url in urls:
+        db.add(WebhookDelivery(url=url, payload=payload))
 
 
 # ---------------------------------------------------------------------------
@@ -440,14 +634,6 @@ def bump_version(current: str, bump: str) -> str:
     major, minor = (int(x) for x in (normalise_version(current) or "0.0").split("."))
     return f"{major + 1}.0" if bump == "major" else f"{major}.{minor + 1}"
 
-
-def _next_ref(db: Session, prefix: str) -> str:
-    highest = 0
-    for (ref,) in db.query(Document.ref).filter(Document.ref.like(f"{prefix}-%")).all():
-        m = re.match(rf"^{re.escape(prefix)}-(\d+)$", ref)
-        if m:
-            highest = max(highest, int(m.group(1)))
-    return f"{prefix}-{highest + 1:04d}"
 
 
 def _due(site: dict, status: str) -> date | None:
@@ -490,6 +676,11 @@ def _notify_stage(db: Session, doc: Document, site: dict, action: str = "", acto
     def send(user: User, subject: str, lines: list[str]):
         mailer.queue(db, user.email, subject, "notice.html", site, heading=f"{doc.ref} - {doc.title}",
                      lines=lines, button=link, comment=comment, comment_author=who)
+        if user.is_absent and user.deputy:
+            mailer.queue(db, user.deputy.email, f"[deputy for {user.display}] {subject}", "notice.html", site,
+                         heading=f"{doc.ref} - {doc.title}",
+                         lines=[f"{user.display} is absent until {user.absent_until.isoformat()} and named you "
+                                "as deputy. You can act on their behalf."] + lines, button=link)
 
     if doc.status == DRAFT:
         send(doc.owner, f"Please draft {doc.ref} (due {due})", [
