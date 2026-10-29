@@ -15,8 +15,8 @@ from sqlalchemy.orm import Session
 from . import docx_meta, site_settings, storage
 from .config import get_config
 from .models import (
-    ACTIVE_STATUSES, PUBLISHED, ROLE_ADMIN, STATUSES, Acknowledgment, Document, Publication, Revision, StageLog,
-    User, WebhookDelivery, utcnow,
+    ACTIVE_STATUSES, PUBLISHED, ROLE_ADMIN, STATUSES, Acknowledgment, Document, PasskeyCredential, Publication,
+    Revision, StageLog, User, WebhookDelivery, utcnow,
 )
 
 log = logging.getLogger(__name__)
@@ -136,6 +136,11 @@ def security_checks(db: Session) -> list[dict]:
     add(not cfg.admin_password, "ADMIN_PASSWORD removed",
         "No administrator password in the configuration." if not cfg.admin_password
         else "ADMIN_PASSWORD is still set: remove it from .env (or its secret file) once you signed in.")
+    admins = db.query(User).filter(User.role == ROLE_ADMIN, User.active.is_(True)).all()
+    strong = [a for a in admins if a.oidc_subject or db.query(PasskeyCredential).filter_by(user_id=a.id).first()]
+    add(len(strong) == len(admins), "Strong authentication of administrators",
+        "Every administrator has a passkey or signs in with SSO." if len(strong) == len(admins)
+        else f"{len(admins) - len(strong)} administrator(s) sign in with a password only: add a passkey in My account.")
     in_env = [n for n in cfg.secrets_in_env if n != "ADMIN_PASSWORD"]
     add(not in_env, "Secrets in files",
         "Secrets are read from files (*_FILE)." if not in_env

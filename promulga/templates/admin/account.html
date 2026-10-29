@@ -1,5 +1,6 @@
 {% extends "admin/base.html" %}
 {% block title %}My account - {{ site.site_name }}{% endblock %}
+{% block scripts %}<script src="/static/passkeys.js?v={{ app_version }}"></script>{% endblock %}
 {% block content %}
 <div class="page-head"><div class="container">
   <h1>My account</h1>
@@ -20,6 +21,29 @@
     </fieldset>
     <div class="actions"><button class="btn" type="submit">Save</button></div>
   </form>
+  <div class="card" id="passkeys">
+    <h2>{{ _("Passkeys") }}</h2>
+    <p class="small muted">Sign in with your fingerprint, face, PIN or security key instead of a password. The private key never
+      leaves your device; Promulga only keeps the public key. Add one per device you use.</p>
+    {% if passkeys %}
+    <div class="table-wrap"><table>
+      <thead><tr><th>Name</th><th>Added</th><th>Last used</th><th></th></tr></thead>
+      <tbody>{% for k in passkeys %}
+        <tr><td>{{ k.name }}</td><td class="small">{{ k.created_at | fdate }}</td><td class="small">{{ k.last_used_at | fdate or '-' }}</td>
+          <td><form class="inline-form" method="post" action="/admin/account/passkeys/{{ k.id }}/delete" onsubmit="return confirm('Remove the passkey {{ k.name }}?')">
+            <input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-sm btn-danger" type="submit">Remove</button></form></td></tr>
+      {% endfor %}</tbody>
+    </table></div>
+    {% else %}<p class="empty small">No passkey yet.</p>{% endif %}
+    <div data-passkey hidden>
+      <div class="row" style="align-items:end">
+        <div><label for="passkey-name">Name of this device</label><input id="passkey-name" type="text" maxlength="100" placeholder="e.g. Laptop - Windows Hello"></div>
+        <div style="flex:0 0 auto"><button class="btn" type="button" id="passkey-add">{{ _("Add a passkey") }}</button></div>
+      </div>
+      <div id="passkey-status" hidden></div>
+    </div>
+    <p class="notice small" data-passkey-unsupported hidden>This browser does not support passkeys.</p>
+  </div>
   <form class="card" method="post" action="/admin/account/absence">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <h2>Absence and deputy</h2>

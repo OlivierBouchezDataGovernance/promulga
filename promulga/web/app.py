@@ -17,7 +17,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from .. import db as database
 from ..config import Config, get_config
-from . import admin, api, auth, oo, portal
+from . import admin, api, auth, oo, passkeys, portal
 from .deps import CsrfError, Forbidden, LoginRequired, MustChangePassword, flash, login_url, render
 
 log = logging.getLogger("promulga")
@@ -150,6 +150,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     app.add_middleware(SessionMiddleware, secret_key=cfg.secret_key, session_cookie="promulga_session",
                        max_age=60 * 60 * 12, same_site="lax", https_only=cfg.secure_cookies)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    app.include_router(passkeys.router)
     app.include_router(auth.router)
     app.include_router(api.router)
     app.include_router(oo.router)

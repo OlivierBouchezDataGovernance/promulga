@@ -1,9 +1,15 @@
 {% extends "portal/base.html" %}
 {% block title %}Sign in - {{ site.site_name }}{% endblock %}
+{% block scripts %}<script src="/static/passkeys.js?v={{ app_version }}"></script>{% endblock %}
 {% block content %}
 <section class="section"><div class="container" style="max-width:460px">
   <div class="card">
     <h1>Sign in</h1>
+    <div data-passkey hidden>
+      <p><button class="btn" type="button" id="passkey-login" data-next="{{ next }}">{{ icon("shield-check", 16) }} {{ _("Sign in with a passkey") }}</button></p>
+      <div id="passkey-status" hidden></div>
+      <p class="small muted">{{ _("or with your e-mail and password:") }}</p>
+    </div>
     {% if oidc_enabled %}
       <p><a class="btn btn-outline" href="/auth/oidc/login?next={{ next | urlencode }}">{{ oidc_label }}</a></p>
       <p class="small muted">or with your e-mail and password:</p>

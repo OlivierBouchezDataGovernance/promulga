@@ -26,7 +26,7 @@ from ..config import get_config
 from ..db import get_db
 from ..models import (
     ACTIVE_STATUSES, APPROVAL, REVIEW, ROLES, STATUSES, ApiToken, Assignment, Comment, Document, Event, OutboxMail,
-    Publication, Revision, Taxonomy, Term, User, WebhookDelivery,
+    PasskeyCredential, Publication, Revision, Taxonomy, Term, User, WebhookDelivery,
 )
 from ..security import check_password_strength, hash_password, verify_password
 from .deps import (
@@ -757,7 +757,21 @@ def audit_csv(q: str = "", ref: str = "", db: Session = Depends(get_db), user: U
 def account(request: Request, db: Session = Depends(get_db), user: User = Depends(require_contributor)):
     people = db.query(User).filter(User.active.is_(True), User.role != "viewer", User.id != user.id) \
         .order_by(User.email).all()
-    return render(request, db, "admin/account.html", user=user, people=people)
+    passkeys = db.query(PasskeyCredential).filter_by(user_id=user.id).order_by(PasskeyCredential.id).all()
+    return render(request, db, "admin/account.html", user=user, people=people, passkeys=passkeys)
+
+
+@router.post("/account/passkeys/{key_id}/delete", dependencies=[Depends(csrf_protect)])
+def delete_passkey(key_id: int, request: Request, db: Session = Depends(get_db),
+                   user: User = Depends(require_contributor)):
+    key = db.get(PasskeyCredential, key_id)
+    if key is None or key.user_id != user.id:
+        raise HTTPException(404)
+    workflow.log_admin(db, user, "Passkey removed", key.name)
+    db.delete(key)
+    db.commit()
+    flash(request, "Passkey removed.", "success")
+    return redirect("/admin/account#passkeys")
 
 
 @router.post("/account/absence", dependencies=[Depends(csrf_protect)])

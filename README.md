@@ -19,7 +19,7 @@ Two web sites in one small application:
 |---|---|---|
 | For | everyone (public by default), or signed-in readers, or the intranet only | owners, reviewers, approvers, Document Managers, administrators |
 | What | browse the published documents through one or more tag hierarchies, full-text search, read/download the official PDF and its previous versions | tasks, register, check-out / check-in of the Word file, comments, review done, approve / reject, publication, reminders, audit log, users, tags, look and feel |
-| Sign-in | optional (viewer role) | e-mail + password, or single sign-on (OpenID Connect: Entra ID, Google, Keycloak...) |
+| Sign-in | optional (viewer role) | passkey, e-mail + password, or single sign-on (OpenID Connect: Entra ID, Google, Keycloak...) |
 
 ### What it does
 
@@ -62,6 +62,8 @@ New in 0.2:
   `public` (index, PDFs, DCAT-AP / JSON / CSV catalogues, checksums), pushed to
   GitHub in one commit; optional electronic seal (PAdES) of the PDFs.
 - **Integrations.** Read-only REST API with tokens, webhooks (Teams, Slack).
+- **Passkeys.** Sign in with Windows Hello, Touch ID, Android or a security
+  key: no password, nothing secret stored on the server, phishing-resistant.
 - **Safer operations.** Automatic database migrations, `promulga backup`,
   secrets as files, first-run password link, security checks page.
 
@@ -115,8 +117,7 @@ best-effort answers to issues when time allows. Review it, test it, and get a
 security review before trusting it with sensitive documents.
 
 Known limits of version 0.2: the interface is in English (texts are marked
-for translation), passkeys are not supported yet (use SSO for strong
-authentication), a single application process, the cover page and variables
+for translation), a single application process, the cover page and variables
 need .docx files, the online editor is limited to 20 simultaneous editors
 (OnlyOffice Community).
 

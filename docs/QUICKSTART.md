@@ -83,7 +83,19 @@ and who the workflow is waiting for (CSV export).
 
 ---
 
-## 8. Governance features
+## 8. Passkeys (recommended for administrators)
+
+*My account > Passkeys > Add a passkey*: your device (Windows Hello, Touch ID,
+an Android phone, a security key or a password manager) creates a key pair for
+this site; Promulga stores only the public key. Afterwards, *Sign in with a
+passkey* on the login page: no e-mail, no password, and it cannot be phished.
+Add one passkey per device; remove a lost one from the same page.
+*Admin > Security* warns when an administrator has neither a passkey nor SSO.
+
+Passkeys are bound to the host name of `BASE_URL`: they need HTTPS (or
+`http://localhost` for a test) and must be added again if the domain changes.
+
+## 9. Governance features
 
 - **Change note**: a new revision asks what it will change; it appears in the
   version history of the cover page and of the portal.

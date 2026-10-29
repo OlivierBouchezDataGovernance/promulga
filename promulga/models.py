@@ -403,3 +403,21 @@ class WebhookDelivery(Base):
     sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     error: Mapped[str] = mapped_column(Text, default="")
+
+
+class PasskeyCredential(Base):
+    """A WebAuthn passkey (public key) registered by a user. The private key never leaves the device."""
+
+    __tablename__ = "passkeys"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    credential_id: Mapped[str] = mapped_column(String(512), unique=True, index=True)   # base64url
+    public_key: Mapped[str] = mapped_column(Text)                                       # base64url COSE key
+    sign_count: Mapped[int] = mapped_column(Integer, default=0)
+    transports: Mapped[str] = mapped_column(String(200), default="")
+    name: Mapped[str] = mapped_column(String(100), default="Passkey")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    user: Mapped[User] = relationship()
