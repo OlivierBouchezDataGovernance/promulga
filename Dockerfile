@@ -13,7 +13,7 @@ RUN apt-get update \
  && mkdir -p /data && chown promulga:promulga /data
 
 WORKDIR /app
-COPY pyproject.toml README.md LICENSE ./
+COPY pyproject.toml README.md LICENSE NOTICE ./
 COPY promulga ./promulga
 RUN pip install --no-cache-dir ".[postgres]"
 COPY deploy/entrypoint.sh /usr/local/bin/promulga-entrypoint

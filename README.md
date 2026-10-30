@@ -6,6 +6,15 @@
 procedures, guidelines – from the first draft to the official, versioned PDF,
 with a public portal to find them.
 
+**A demonstration and training tool.** Promulga shows, concretely and in an
+hour on a laptop, what professional document-management and policy-management
+platforms do: deadlines and reminders, review and approval, official stamped
+PDFs, read and acknowledge, audit trail. Use it to train Data Owners and
+governance teams, to demonstrate a process, or to pilot a policy framework
+before choosing a product. It is open source (Apache 2.0) so that its code can
+be reused, adapted and extended, for instance into a solution for organisations
+with a small budget. It is not a supported production platform.
+
 ```
  Draft ──submit──▶ Review ──all reviewers done──▶ Revision ──submit──▶ Approval ──all approve──▶ Published
  (owner edits)     (reviewers comment)            (owner corrects)     (approvers decide)        (stamped PDF, vX.Y)
@@ -124,14 +133,16 @@ PAdES signatures, OnlyOffice Docs (optional) for online editing.
 
 ### Status, licence and support
 
-© 2026 Olivier Bouchez. Content and code licensed under
-[CC BY-NC 4.0](LICENSE): free for non-commercial use, with attribution.
-Commercial use requires prior written permission: sales@promulga.com.
+© 2026 Olivier Bouchez. Licensed under the [Apache License 2.0](LICENSE)
+(see also [NOTICE](NOTICE)): you may use, modify and redistribute it,
+including in commercial or internal projects, provided you keep the licence
+and copyright notices and state your changes.
 
-It is offered **as is**: whoever installs it runs and secures their own
-server, and support is best effort only (support@promulga.com). Installation,
-migration and training services are available on request from Olivier Bouchez
-Data Consulting. Website: https://promulga.com.
+Promulga is a **demonstration and training tool**, offered **as is**, without
+warranty and without a service level: whoever installs it runs and secures
+their own server, and support is best effort only (support@promulga.com).
+Training and demonstration sessions are available on request from Olivier
+Bouchez Data Consulting. Website: https://promulga.com.
 
 Known limits of version 0.2: the interface is in English (texts are marked
 for translation), a single application process, the cover page and variables
