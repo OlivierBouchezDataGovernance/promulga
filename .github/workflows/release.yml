@@ -80,7 +80,7 @@ jobs:
           sed -e '/^    build: \.$/d' \
               -e "s|ghcr.io/olivierbouchezdatagovernance/promulga:latest|ghcr.io/${owner}/promulga:${GITHUB_REF_NAME#v}|" \
               docker-compose.yml > bundle/promulga/docker-compose.yml
-          cp -r .env.example deploy docs LICENSE README.md bundle/promulga/
+          cp -r .env.example deploy docs LICENSE NOTICE README.md bundle/promulga/
           chmod +x bundle/promulga/deploy/*.sh
           (cd bundle/promulga && zip -r ../promulga-docker.zip . -x '*.DS_Store')
       - uses: softprops/action-gh-release@v2
