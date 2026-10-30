@@ -9,8 +9,20 @@
 - Without reviewers, "submit" in Draft goes straight to Approval.
 - Editing is check-out / check-in: the owner downloads the working file,
   edits it in Word (or any editor) and uploads it again as a new revision.
-- Reviewers write their remarks as comments in the application (they may
-  also attach an annotated file); the owner replies and resolves them.
+- Who sees and does what, by stage:
+    Draft     only the owner (and Document Managers) see the document;
+    Review    reviewers comment, nobody edits; the Word file is not handed out,
+              only a PDF "review copy";
+    Revision  the owner edits and decides on every remark (accepted, or rejected
+              with a justification); the others may only reply to existing remarks;
+              comments written in the Word file are imported when the review ends;
+    Approval  frozen: a PDF is built from the submitted revision and the approvers
+              approve that PDF; the same revision is published.
+  There is no second review round: Revision always goes to Approval.
+- Every document hangs under a parent (Charter > Policy > Standard, Guideline,
+  Procedure ...), except the Charter. See PARENT_TYPES.
+- Annexes are never reviewed nor approved: French and Dutch translations of a
+  published English version, and external references (legal texts, norms).
 - At publication the last revision is converted to PDF, stamped with the
   reference, version and date, and becomes immutable.
 
@@ -36,10 +48,22 @@ from . import docx_meta, mailer, naming, pdf, site_settings, storage
 from .accounts import participant
 from .config import get_config
 from .models import (
-    ACTIVE_STATUSES, APPROVAL, APPROVER, CLASSIFICATIONS, DRAFT, PUBLISHED, RETIRED, REVIEW, REVIEWER, REVISION,
-    ROLE_MANAGER, Acknowledgment, Assignment, Comment, Document, Event, Publication, Revision, StageLog, Term,
-    User, WebhookDelivery, utcnow,
+    ACCEPTED, ACTIVE_STATUSES, APPROVAL, APPROVER, CLASSIFICATIONS, DRAFT, PUBLISHED, REJECTED, RETIRED, REVIEW,
+    REVIEWER, REVISION, ROLE_ADMIN, ROLE_MANAGER, TRANSLATION_LANGUAGES, Acknowledgment, Assignment, Comment, Document, Event,
+    ExternalReference, Publication, Revision, StageLog, Term, Translation, User, WebhookDelivery, utcnow,
 )
+
+# Allowed parent types, by type code (the prefix of the type in the site settings).
+# [] = top of the hierarchy (no parent). A type that is not listed may hang anywhere, or nowhere.
+# The rule only applies when the site defines at least one of the allowed parent types.
+PARENT_TYPES: dict[str, list[str]] = {
+    "CHT": [],
+    "POL": ["CHT"],
+    "STD": ["POL"], "GDL": ["POL"], "PRO": ["POL"], "PRC": ["POL"],
+    "CTR": ["STD"],
+    "WIN": ["PRO", "PRC"],
+    "METH": ["POL"], "TPL": ["POL"],
+}
 
 
 class WorkflowError(Exception):
@@ -59,10 +83,21 @@ def is_participant(doc: Document, user: User) -> bool:
 
 
 def can_see(doc: Document, user: User) -> bool:
-    """Access to the working area of a document (files, comments, history)."""
-    if is_manager(user) or is_participant(doc, user):
+    """Access to the working area of a document (files, comments, history).
+    A Draft belongs to its owner: reviewers and approvers see it from Review on."""
+    if is_manager(user) or doc.owner_id == user.id:
+        return True
+    if doc.status == DRAFT:
+        return doc.owner.is_absent and doc.owner.deputy_id == user.id
+    if is_participant(doc, user):
         return True
     return any(a.user.is_absent and a.user.deputy_id == user.id for a in doc.assignments)
+
+
+def handles_file(doc: Document, user: User) -> bool:
+    """Whether `user` may get the editable working file now (Draft and Revision, owner or manager).
+    In Review and Approval everybody gets a PDF copy instead."""
+    return doc.status in (DRAFT, REVISION) and (doc.owner_id == user.id or is_manager(user))
 
 
 def pending_users(doc: Document) -> list[User]:
@@ -86,13 +121,27 @@ def acting_assignment(doc: Document, actor: User, role: str) -> Assignment | Non
 
 
 def segregation_warnings(doc: Document) -> list[str]:
-    """Segregation of duties: the owner should not review or approve their own document."""
+    """Segregation of duties: the owner approves their own document (it is theirs), but never alone."""
     out = []
-    if any(a.user_id == doc.owner_id for a in doc.approvers):
-        out.append("The owner is also an approver: segregation of duties is not respected.")
+    if doc.approvers and not independent_approvers(doc):
+        out.append("The owner is the only approver: add at least one other approver "
+                   "(the owner approves the document, but never alone).")
     if any(a.user_id == doc.owner_id for a in doc.reviewers):
         out.append("The owner is also a reviewer of their own document.")
     return out
+
+
+def independent_approvers(doc: Document) -> list[Assignment]:
+    return [a for a in doc.approvers if a.user_id != doc.owner_id]
+
+
+def default_approvers(db: Session, site: dict) -> list[str]:
+    """E-mails proposed as approvers of a new document, besides its owner: the setting, else the administrators."""
+    emails = [e for e in site.get("default_approvers") or [] if e]
+    if emails:
+        return emails
+    return [u.email for u in db.query(User).filter(User.active.is_(True), User.role == ROLE_ADMIN)
+            .order_by(User.email).all()]
 
 
 def allowed_actions(doc: Document, user: User) -> set[str]:
@@ -106,7 +155,13 @@ def allowed_actions(doc: Document, user: User) -> set[str]:
     if doc.checked_out_by_id and (doc.checked_out_by_id == user.id or is_manager(user)):
         actions.add("release")
     if doc.status in ACTIVE_STATUSES and can_see(doc, user):
-        actions.add("comment")
+        actions.add("reply")
+        if doc.status != REVISION or owner_or_manager:
+            actions.add("comment")
+    if doc.status == REVISION and owner_or_manager:
+        actions.add("decide")
+    if owner_or_manager:
+        actions.add("annex")
     if doc.status == REVIEW and acting_assignment(doc, user, REVIEWER):
         actions.add("review_done")
     if doc.status == APPROVAL and acting_assignment(doc, user, APPROVER):
@@ -149,7 +204,10 @@ def create_document(db: Session, actor: User, *, title: str, doc_type: str, summ
                     reviewer_emails: list[str], approver_emails: list[str], term_ids: list[int],
                     file: tuple[str, bytes] | None, review_months: int | None = None,
                     ack_required: bool = False, classification: str = "internal",
-                    keywords: str = "", readers: list[str] | None = None) -> Document:
+                    keywords: str = "", readers: list[str] | None = None,
+                    parent_id: int | None = None, number: int | None = None) -> Document:
+    """`number` reserves a given {ID} (e.g. to import a set whose references are already written in the
+    documents); by default the next free number is used."""
     _require_manager(actor)
     site = site_settings.get_all(db)
     title = (title or "").strip()
@@ -157,14 +215,20 @@ def create_document(db: Session, actor: User, *, title: str, doc_type: str, summ
     _require(len(approver_emails) > 0, "At least one approver is required.")
     prefix = site_settings.doc_type_prefix(site, doc_type)
     _require(classification in CLASSIFICATIONS, "Unknown classification.")
+    _check_summary(summary)
+    parent = _check_parent(db, site, doc_type, parent_id, None)
 
     owner = participant(db, owner_email, actor, site)
-    number = (db.query(func.max(Document.number)).scalar() or 0) + 1
+    if number is not None:
+        _require(number > 0 and db.query(Document).filter(Document.number == number).count() == 0,
+                 f"The document number {number} is already used.")
+    else:
+        number = (db.query(func.max(Document.number)).scalar() or 0) + 1
     doc = Document(number=number, ref=f"tmp-{number}", title=title, summary=(summary or "").strip(),
                    doc_type=doc_type, owner=owner, status=DRAFT, next_version="1.0",
                    change_note="Initial version", stage_due=_due(site, DRAFT), stage_started_at=utcnow(),
                    review_months=review_months, ack_required=ack_required, classification=classification,
-                   keywords=_clean_keywords(keywords), readers=", ".join(readers or []))
+                   keywords=_clean_keywords(keywords), readers=", ".join(readers or []), parent=parent)
     db.add(doc)
     doc.terms = db.query(Term).filter(Term.id.in_(term_ids or [0])).all()
     doc.ref = naming.build_ref(doc, prefix)
@@ -199,11 +263,18 @@ def create_document(db: Session, actor: User, *, title: str, doc_type: str, summ
 def update_metadata(db: Session, actor: User, doc: Document, *, title: str, summary: str,
                     term_ids: list[int], review_months: int | None = None, ack_required: bool | None = None,
                     classification: str | None = None, keywords: str | None = None,
-                    readers: list[str] | None = None) -> None:
+                    readers: list[str] | None = None, parent_id: int | None | bool = False) -> None:
+    """`parent_id` False = leave the parent unchanged; None = no parent; an id = that parent."""
     _require_manager(actor)
     title = (title or "").strip()
     _require(bool(title), "The title is required.")
+    _check_summary(summary)
     before = f"title '{doc.title}'"
+    if parent_id is not False:
+        parent = _check_parent(db, site_settings.get_all(db), doc.doc_type, parent_id, doc)
+        if (parent.id if parent else None) != doc.parent_id:
+            before += f", parent {doc.parent.ref if doc.parent else 'none'}"
+            doc.parent = parent
     doc.title = title
     doc.summary = (summary or "").strip()
     doc.terms = db.query(Term).filter(Term.id.in_(term_ids or [0])).all()
@@ -238,6 +309,98 @@ def update_participants(db: Session, actor: User, doc: Document, *, owner_email:
         _move(db, doc, REVISION, actor, "Review skipped (no reviewers left)", site=site)
     else:
         _advance_if_complete(db, doc, actor, site)
+
+
+# ---------------------------------------------------------------------------
+# Hierarchy
+# ---------------------------------------------------------------------------
+
+def _type_codes(site: dict) -> dict[str, str]:
+    """Document type name -> type code (upper-case prefix)."""
+    return {t["name"]: (t.get("prefix") or "").upper() for t in site["doc_types"]}
+
+
+def parent_types(site: dict, doc_type: str) -> list[str] | None:
+    """Names of the types a `doc_type` document may hang under; [] = top of the hierarchy, None = free."""
+    codes = _type_codes(site)
+    allowed = PARENT_TYPES.get(codes.get(doc_type, ""))
+    if allowed is None:
+        return None
+    names = [name for name, code in codes.items() if code in allowed]
+    if allowed and not names:      # the site does not use the parent type (e.g. no Charter): free
+        return None
+    return names
+
+
+def parent_candidates(db: Session, site: dict, doc_type: str, doc: Document | None = None) -> list[Document]:
+    """Documents that may be the parent of a `doc_type` document (or of `doc`, without its own subtree)."""
+    allowed = parent_types(site, doc_type)
+    if allowed == []:
+        return []
+    query = db.query(Document).filter(Document.status != RETIRED)
+    if allowed is not None:
+        query = query.filter(Document.doc_type.in_(allowed))
+    excluded = {d.id for d in descendants(doc)} | ({doc.id} if doc else set())
+    return [d for d in query.order_by(Document.ref).all() if d.id not in excluded]
+
+
+def descendants(doc: Document | None) -> list[Document]:
+    out, stack, seen = [], list(doc.children) if doc else [], set()
+    while stack:
+        d = stack.pop()
+        if d.id in seen:
+            continue
+        seen.add(d.id)
+        out.append(d)
+        stack.extend(d.children)
+    return out
+
+
+def _check_parent(db: Session, site: dict, doc_type: str, parent_id: int | None, doc: Document | None) -> Document | None:
+    allowed = parent_types(site, doc_type)
+    if allowed == []:
+        _require(not parent_id, f"A {doc_type} is the top of the hierarchy: it has no parent document.")
+        return None
+    if not parent_id:
+        if allowed is not None:
+            raise WorkflowError(f"Choose the parent document: a {doc_type} hangs under a {' or '.join(allowed)}. "
+                                "Create that document first if it does not exist yet.")
+        return None
+    parent = db.get(Document, parent_id)
+    _require(parent is not None and parent.status != RETIRED, "Unknown or withdrawn parent document.")
+    if allowed is not None and parent.doc_type not in allowed:
+        raise WorkflowError(f"A {doc_type} hangs under a {' or '.join(allowed)}, not under a {parent.doc_type}.")
+    if doc is not None:
+        _require(parent.id != doc.id and parent.id not in {d.id for d in descendants(doc)},
+                 "A document cannot hang under itself or under one of its own children.")
+    return parent
+
+
+def tree(db: Session) -> list[tuple[int, Document]]:
+    """The whole register as (depth, document), parents first, children sorted by reference."""
+    docs = db.query(Document).order_by(Document.ref).all()
+    ids = {d.id for d in docs}
+    out: list[tuple[int, Document]] = []
+
+    def walk(d: Document, depth: int, seen: set[int]):
+        out.append((depth, d))
+        for c in d.children:
+            if c.id not in seen:
+                walk(c, depth + 1, seen | {c.id})
+
+    for d in docs:
+        if d.parent_id is None or d.parent_id not in ids:
+            walk(d, 0, {d.id})
+    return out
+
+
+SUMMARY_MAX = 300   # one sentence (Writing Guideline): it must fit on the title page with the title
+
+
+def _check_summary(summary: str) -> None:
+    n = len((summary or "").strip())
+    _require(n <= SUMMARY_MAX, f"The description is one sentence of {SUMMARY_MAX} characters at most, so that it fits "
+             f"on the title page ({n} now). The detail belongs in the document.")
 
 
 def _set_assignments(db: Session, doc: Document, reviewer_emails: list[str], approver_emails: list[str],
@@ -293,10 +456,10 @@ def check_in(db: Session, actor: User, doc: Document, filename: str, data: bytes
 
 
 def save_online(db: Session, user: User | None, doc: Document, data: bytes) -> Revision:
-    """Stores the file saved by the online editor as a new revision (any active stage: comments of
-    reviewers are part of the file). The Word cover page is refreshed at check-in and publication only,
-    so open editing sessions are never invalidated."""
-    _require_status(doc, *ACTIVE_STATUSES)
+    """Stores the file saved by the online editor as a new revision (Draft, Review and Revision: comments
+    of reviewers are part of the file; Approval is frozen). The Word cover page is refreshed at check-in
+    and publication only, so open editing sessions are never invalidated."""
+    _require_status(doc, DRAFT, REVIEW, REVISION)
     filename = doc.latest_revision.filename if doc.latest_revision else "document.docx"
     actor = user or doc.owner
     revision = _store_revision(db, actor, doc, filename, data, "Saved from the online editor", refresh=False)
@@ -395,6 +558,8 @@ def add_comment(db: Session, actor: User, doc: Document, body: str, parent_id: i
     if parent_id:
         parent = db.get(Comment, parent_id)
         _require(parent is not None and parent.document_id == doc.id, "Unknown comment.")
+    _require(parent is not None or doc.status != REVISION or doc.owner_id == actor.id or is_manager(actor),
+             "During the revision you can only reply to the existing remarks: the review is over.")
     comment = Comment(document=doc, author=actor, body=body, stage=doc.status, version=doc.next_version,
                       revision=doc.latest_revision, parent_id=parent.id if parent else None)
     if attachment is not None:
@@ -416,6 +581,198 @@ def set_comment_resolved(db: Session, actor: User, doc: Document, comment: Comme
     comment.resolved = resolved
 
 
+def remarks(doc: Document) -> list[Comment]:
+    """The remarks of the version in preparation that the owner must decide on: top-level comments
+    of the other participants (written in Promulga or imported from the Word file)."""
+    return [c for c in doc.comments if c.parent_id is None and c.version == doc.next_version
+            and c.author_id != doc.owner_id]
+
+
+def undecided(doc: Document) -> list[Comment]:
+    return [c for c in remarks(doc) if not c.decision]
+
+
+def decide_comment(db: Session, actor: User, doc: Document, comment: Comment, decision: str, note: str = "") -> None:
+    """Revision: the owner accepts a remark, or rejects it with a justification."""
+    _require_status(doc, REVISION)
+    _require_owner_or_manager(doc, actor)
+    _require(comment.document_id == doc.id and comment.parent_id is None, "Unknown comment.")
+    _require(decision in (ACCEPTED, REJECTED), "Choose accept or reject.")
+    note = (note or "").strip()
+    _require(decision == ACCEPTED or bool(note), "Explain why you reject this remark.")
+    comment.decision = decision
+    comment.decision_note = note[:5000]
+    comment.decided_at = utcnow()
+    comment.decided_by_id = actor.id
+    comment.resolved = True
+    _log(db, doc, actor, f"Remark {decision}", doc.status, doc.status,
+         f"{comment.author_name}: {comment.body[:200]}" + (f" -> {note[:300]}" if note else ""))
+
+
+def import_word_comments(db: Session, doc: Document) -> int:
+    """Copies the comments of the latest Word revision into the remarks (once per comment)."""
+    rev = doc.latest_revision
+    if rev is None or not docx_meta.supports_metadata(rev.filename):
+        return 0
+    try:
+        found = docx_meta.word_comments(storage.read_bytes(rev.storage_path))
+    except Exception:
+        return 0
+    known = {c.external_id for c in doc.comments if c.external_id}
+    people = {}
+    for u in [doc.owner] + [a.user for a in doc.assignments]:
+        people[u.display.lower()] = u
+        people[u.email.lower()] = u
+    added = 0
+    for item in found:
+        key = f"word:{rev.sha256[:12]}:{item['id']}"
+        if key in known:
+            continue
+        user = people.get(item["author"].strip().lower())
+        db.add(Comment(document=doc, author=user, author_label=item["author"][:200], source="word",
+                       location=item["anchor"][:300], external_id=key, body=item["text"][:10_000],
+                       stage=REVIEW, version=doc.next_version, revision=rev))
+        added += 1
+    if added:
+        db.flush()
+        db.refresh(doc)
+    return added
+
+
+def comments_csv_rows(doc: Document) -> list[list[str]]:
+    """Every remark of the version in preparation with the owner's decision, for the record."""
+    rows = [["Version", "Source", "Author", "Date (UTC)", "Location", "Remark", "Decision", "Justification",
+             "Decided by", "Decided at (UTC)"]]
+    for c in [c for c in doc.comments if c.parent_id is None]:
+        rows.append([c.version, c.source, c.author_name, c.created_at.strftime("%Y-%m-%d %H:%M"), c.location,
+                     c.body, c.decision, c.decision_note, c.decided_by.display if c.decided_by else "",
+                     c.decided_at.strftime("%Y-%m-%d %H:%M") if c.decided_at else ""])
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# PDF copies for Review and Approval
+# ---------------------------------------------------------------------------
+
+def review_copy(db: Session, doc: Document, rev: Revision) -> bytes:
+    """A PDF of `rev` marked 'Review copy': what reviewers and approvers read instead of the Word file.
+    Kept on disk per revision and stage. Raises pdf.ConversionError when no converter is available."""
+    if doc.status == APPROVAL and doc.approval_pdf_path and doc.approval_revision_id == rev.id:
+        return storage.read_bytes(doc.approval_pdf_path)
+    cache = get_config().files_dir / str(doc.id) / "review" / f"r{rev.id}-{doc.status}.pdf"
+    if cache.is_file():
+        return cache.read_bytes()
+    data = storage.read_bytes(rev.storage_path)
+    if docx_meta.supports_metadata(rev.filename):
+        data = refresh_docx(db, doc, data)
+    out = pdf.watermark(pdf.to_pdf(rev.filename, data), "REVIEW COPY")
+    out = pdf.stamp(out, f"{doc.ref} - {doc.title} - version {doc.next_version} (draft, not in force) - "
+                         f"r{rev.number} - {doc.status}")
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_bytes(out)
+    return out
+
+
+def _prepare_approval(db: Session, doc: Document, actor: User, site: dict) -> None:
+    """Approval: freezes the submitted revision and builds the PDF the approvers approve."""
+    rev = doc.latest_revision
+    doc.approval_revision_id = rev.id if rev else None
+    doc.approval_pdf_path = doc.approval_pdf_sha = ""
+    if rev is None:
+        return
+    try:
+        data = storage.read_bytes(rev.storage_path)
+        if docx_meta.supports_metadata(rev.filename):
+            data = refresh_docx(db, doc, data)
+        out = pdf.stamp(pdf.to_pdf(rev.filename, data),
+                        f"{doc.ref} - {doc.title} - version {doc.next_version} submitted for approval "
+                        f"{date.today().isoformat()} - {site['site_name']}")
+    except pdf.ConversionError as exc:
+        _log(db, doc, actor, "Approval PDF not built", doc.status, doc.status, str(exc)[:300])
+        return
+    doc.approval_pdf_path, doc.approval_pdf_sha = storage.save_bytes(f"{doc.id}/approval",
+                                                                     f"{doc.ref}-v{doc.next_version}.pdf", out)
+    _log(db, doc, actor, "Approval PDF built", doc.status, doc.status,
+         f"r{rev.number}, sha256 {doc.approval_pdf_sha}")
+
+
+# ---------------------------------------------------------------------------
+# Annexes: translations and external references (never reviewed nor approved)
+# ---------------------------------------------------------------------------
+
+TRANSLATION_EXTENSIONS = {".pdf", ".docx", ".odt"}
+
+
+def add_translation(db: Session, actor: User, doc: Document, language: str, file: tuple[str, bytes],
+                    method: str = "machine") -> Translation:
+    _require_owner_or_manager(doc, actor)
+    _require(language in TRANSLATION_LANGUAGES, "Unknown language.")
+    _require(bool(doc.current_version), "Translations are attached to a published version: publish the "
+             "English version first.")
+    name = storage.safe_filename(file[0])
+    _require(storage.extension(name) in TRANSLATION_EXTENSIONS,
+             f"File type not accepted. Allowed: {', '.join(sorted(TRANSLATION_EXTENSIONS))}.")
+    _require(0 < len(file[1]) <= get_config().max_upload_mb * 1024 * 1024,
+             f"The file is empty or larger than {get_config().max_upload_mb} MB.")
+    path, digest = storage.save_bytes(f"{doc.id}/translations", name, file[1])
+    t = Translation(document=doc, language=language, version=doc.current_version,
+                    method="human" if method == "human" else "machine", filename=name, storage_path=path,
+                    content_type=_content_type(name), sha256=digest, size=len(file[1]), created_by_id=actor.id)
+    db.add(t)
+    db.flush()
+    db.refresh(doc)
+    _log(db, doc, actor, f"Translation added ({TRANSLATION_LANGUAGES[language]})", doc.status, doc.status,
+         f"{t.notice} {name}, sha256 {digest}")
+    return t
+
+
+def remove_translation(db: Session, actor: User, doc: Document, translation: Translation) -> None:
+    _require_owner_or_manager(doc, actor)
+    _require(translation.document_id == doc.id, "Unknown translation.")
+    _log(db, doc, actor, f"Translation removed ({translation.language_label})", doc.status, doc.status,
+         f"version {translation.version}, {translation.filename}")
+    db.delete(translation)
+    db.flush()
+    db.refresh(doc)
+
+
+def add_reference(db: Session, actor: User, doc: Document, *, title: str, issuer: str = "", edition: str = "",
+                  url: str = "", file: tuple[str, bytes] | None = None) -> ExternalReference:
+    """Registers an external reference and links it to `doc`."""
+    _require_owner_or_manager(doc, actor)
+    title, url = (title or "").strip(), (url or "").strip()
+    _require(bool(title), "The title of the reference is required.")
+    _require(not url or url.startswith(("https://", "http://")), "The link must start with https://.")
+    _require(bool(url) or file is not None, "Give a link or a file.")
+    ref = ExternalReference(title=title[:300], issuer=(issuer or "").strip()[:200],
+                            edition=(edition or "").strip()[:100], url=url[:1000], created_by_id=actor.id)
+    if file is not None:
+        name = storage.safe_filename(file[0])
+        _require(storage.extension(name) in storage.ALLOWED_EXTENSIONS, "File type not accepted.")
+        _require(0 < len(file[1]) <= get_config().max_upload_mb * 1024 * 1024,
+                 f"The file is empty or larger than {get_config().max_upload_mb} MB.")
+        ref.filename = name
+        ref.storage_path, _ = storage.save_bytes("references", name, file[1])
+    db.add(ref)
+    db.flush()
+    link_reference(db, actor, doc, ref)
+    return ref
+
+
+def link_reference(db: Session, actor: User, doc: Document, ref: ExternalReference) -> None:
+    _require_owner_or_manager(doc, actor)
+    if ref not in doc.references:
+        doc.references.append(ref)
+        _log(db, doc, actor, "External reference linked", doc.status, doc.status, ref.label)
+
+
+def unlink_reference(db: Session, actor: User, doc: Document, ref: ExternalReference) -> None:
+    _require_owner_or_manager(doc, actor)
+    if ref in doc.references:
+        doc.references.remove(ref)
+        _log(db, doc, actor, "External reference unlinked", doc.status, doc.status, ref.label)
+
+
 # ---------------------------------------------------------------------------
 # Transitions
 # ---------------------------------------------------------------------------
@@ -427,12 +784,20 @@ def submit(db: Session, actor: User, doc: Document) -> None:
     _require(doc.latest_revision is not None, "Check in a file before submitting.")
     _require(doc.checked_out_by_id is None, "The document is still checked out: check in your file first "
              "(or release the check-out).")
+    if doc.status == REVISION:
+        open_ = undecided(doc)
+        _require(not open_, f"Decide on every remark before submitting: {len(open_)} remark(s) without a "
+                 "decision (accept, or reject with a justification).")
+    _require(bool(independent_approvers(doc)), "The owner is the only approver: add at least one other "
+             "approver before submitting (the owner approves the document, but never alone).")
     if doc.status == DRAFT and doc.reviewers:
         _move(db, doc, REVIEW, actor, "Submitted for review")
-    elif doc.status == DRAFT:
-        _move(db, doc, APPROVAL, actor, "Submitted for approval (no reviewers)")
-    else:
-        _move(db, doc, APPROVAL, actor, "Submitted for approval")
+        return
+    site = site_settings.get_all(db)
+    label = "Submitted for approval (no reviewers)" if doc.status == DRAFT else "Submitted for approval"
+    _move(db, doc, APPROVAL, actor, label, site=site, notify=False)
+    _prepare_approval(db, doc, actor, site)
+    _notify_stage(db, doc, site, action=label, actor=actor)
 
 
 def review_done(db: Session, actor: User, doc: Document, note: str = "") -> None:
@@ -509,7 +874,14 @@ def _move(db: Session, doc: Document, status: str, actor: User | None, action: s
     if status in (REVIEW, APPROVAL, PUBLISHED, RETIRED):
         doc.checked_out_by_id = None
         doc.checked_out_at = None
+    if status in (DRAFT, REVISION):         # unfrozen: a new approval PDF is built at the next submission
+        doc.approval_revision_id = None
+        doc.approval_pdf_path = doc.approval_pdf_sha = ""
     _log(db, doc, actor, action, previous, status, detail)
+    if status == REVISION:
+        n = import_word_comments(db, doc)
+        if n:
+            _log(db, doc, actor, f"{n} comment(s) imported from the Word file", status, status)
     _open_stage(db, doc)
     webhook(db, site, action, doc, actor, detail)
     if notify:
@@ -538,8 +910,14 @@ def _advance_if_complete(db: Session, doc: Document, actor: User, site: dict | N
 def _publish(db: Session, doc: Document, actor: User, site: dict) -> Publication:
     source = doc.latest_revision
     _require(source is not None, "There is no file to publish.")
+    _require(doc.approval_revision_id in (None, source.id),
+             "The file changed after it was submitted for approval: send it back to revision.")
+    approved_pdf = doc.approval_pdf_sha
     version = normalise_version(doc.next_version) or "1.0"
     today = date.today()
+    # Set before the PDF is built, so that its document control page shows the next review date.
+    months = doc.review_months if doc.review_months is not None else int(site.get("review_months") or 0)
+    doc.next_review = _add_months(today, months) if months > 0 else None
     approved_by = ", ".join(a.user.display for a in doc.approvers)
     note = doc.change_note or ("Initial version" if not doc.publications else "")
     upcoming = {"version": version, "date": today.isoformat(), "author": doc.owner.display, "note": note,
@@ -574,9 +952,9 @@ def _publish(db: Session, doc: Document, actor: User, site: dict) -> Publication
     doc.current_version = version
     doc.published_at = today
     doc.change_note = ""
-    months = doc.review_months if doc.review_months is not None else int(site.get("review_months") or 0)
-    doc.next_review = _add_months(today, months) if months > 0 else None
-    _move(db, doc, PUBLISHED, actor, f"Published v{version}", f"sha256 {digest}", site=site)
+    _move(db, doc, PUBLISHED, actor, f"Published v{version}",
+          f"sha256 {digest}" + (f"; approved PDF sha256 {approved_pdf}, same revision r{source.number}"
+                                if approved_pdf else ""), site=site)
     db.flush()
     db.refresh(doc)          # publications are ordered newest first
     if doc.ack_required:
@@ -738,20 +1116,21 @@ def _notify_stage(db: Session, doc: Document, site: dict, action: str = "", acto
         for user in pending_users(doc):
             send(user, f"Please review {doc.ref} (due {due})", [
                 f"{doc.owner.display} asks you to review this document.",
-                "Download the current file, then write your remarks as comments on the document page "
-                "(you may also attach an annotated copy). Click 'Review done' when finished.",
+                "Read the PDF review copy, then write your remarks as comments on the document page "
+                "(or comment online, or attach an annotated copy). Click 'Review done' when finished.",
                 f"Due date: {due}."])
     elif doc.status == REVISION:
         intro = ("The document was rejected during approval and comes back to you."
                  if action == "Rejected" else "The review is finished.")
         send(doc.owner, f"Please revise {doc.ref} (due {due})", [
-            intro, "Answer and resolve the comments, check in the corrected file, then submit it for approval.",
+            intro, "Decide on every remark (accept, or reject with a justification), check in the corrected "
+            "file, then submit it for approval.",
             f"Due date: {due}."])
     elif doc.status == APPROVAL:
         for user in pending_users(doc):
             send(user, f"Please approve {doc.ref} (due {due})", [
                 f"Version {doc.next_version} is submitted for your approval.",
-                "Read the document, then approve it, or reject it with a comment.", f"Due date: {due}."])
+                "Read the PDF submitted for approval, then approve it, or reject it with a comment.", f"Due date: {due}."])
     elif doc.status == PUBLISHED and site.get("notify_on_publish", True):
         people = {doc.owner.id: doc.owner}
         for a in doc.assignments:

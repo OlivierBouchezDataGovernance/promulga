@@ -40,7 +40,7 @@ Two web sites in one small application:
   Word (or LibreOffice), and checks it in again. Every check-in is kept as a
   revision.
 - **Review in the application.** Reviewers comment on the document page
-  (and may attach their annotated copy); the owner replies and resolves.
+  (and may attach their annotated copy); the owner decides on every remark.
 - **Approval by everyone.** All approvers must approve; one rejection (with a
   mandatory comment) sends the document back to the owner.
 - **Official publication.** The approved file is converted to PDF, stamped
@@ -55,6 +55,25 @@ Two web sites in one small application:
   self-hosted Inter font and Lucide icons: no third-party request.
 - **E-mails** to the person who must act, with links; without an SMTP server
   everything is readable in the *Outbox* (handy for demos).
+
+New in 0.4:
+
+- **Document hierarchy.** Every document hangs under a parent: Charter >
+  Policy > Standard, Guideline, Procedure (Control under a Standard, Work
+  instruction under a Procedure). The Charter is the top. Shown on the document
+  page, on the document control page of the Word file, in a tree of the whole
+  register and on the portal.
+- **Clear rules per stage.** A Draft is seen by its owner only. During the
+  Review reviewers comment, nobody edits, and the Word file is replaced by a
+  PDF *review copy*. In Revision the owner decides on every remark (accepted, or
+  rejected with a justification) before submitting; the others may only reply;
+  comments written in Word or in the online editor are imported as remarks. In
+  Approval the content is frozen: approvers approve a PDF built from the
+  submitted revision, and that revision is published. No second review round.
+- **Annexes without approval.** French and Dutch translations attached to a
+  published English version (marked "the English version prevails", outdated
+  when a new version is published), and external references (legal texts,
+  regulations, norms) stored once and linked to the documents that rely on them.
 
 New in 0.3:
 

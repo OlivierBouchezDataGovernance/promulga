@@ -34,12 +34,27 @@ UNSAFE_FILENAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]+')
 
 # Human labels of the variables, in the order of the cover page.
 LABELS = [
-    ("REF", "Reference"), ("TYPE", "Type"), ("DOMAIN", "Domain"), ("FULL_VERSION", "Version"),
+    ("REF", "Reference"), ("TYPE", "Type"), ("PARENT", "Parent document"), ("DOMAIN", "Domain"), ("FULL_VERSION", "Version"),
     ("STATUS", "Status"), ("CLASSIFICATION", "Classification"), ("AUTHOR", "Owner"),
     ("REVIEWERS", "Reviewers"), ("APPROVERS", "Approvers"), ("CREATED", "Created"),
     ("UPDATED", "Last update"), ("PUBLISHED", "Published"), ("NEXT_REVIEW", "Next review"),
     ("KEYWORDS", "Keywords"), ("READERS", "Mandatory readers"), ("LINK", "Official version"),
 ]
+
+
+def reader_names(doc: Document) -> str:
+    """The mandatory readers by name (their e-mail when they have no account or no name yet)."""
+    emails = [e.strip().lower() for e in (doc.readers or "").split(",") if e.strip()]
+    if not emails:
+        return ""
+    from sqlalchemy.orm import object_session
+
+    from .models import User
+    session = object_session(doc)
+    names = {}
+    if session is not None:
+        names = {u.email.lower(): u.display for u in session.query(User).filter(User.email.in_(emails)).all()}
+    return ", ".join(names.get(e, e) for e in emails)
 
 
 def id_label(number: int) -> str:
@@ -65,6 +80,7 @@ def values(doc: Document, version: str | None = None, site: dict | None = None,
         "DESCRIPTION": doc.summary or "",
         "TYPE": doc.doc_type or "",
         "TYPE_CODE": prefix,
+        "PARENT": f"{doc.parent.ref} {doc.parent.title}" if doc.parent else "",
         "DOMAIN": domain.name if domain else "",
         "VERSION": major,
         "SUBVERSION": minor or "0",
@@ -83,7 +99,7 @@ def values(doc: Document, version: str | None = None, site: dict | None = None,
         "CLASSIFICATION_CODE": doc.classification or "internal",
         "KEYWORDS": doc.keywords or "",
         "CHANGE_NOTE": doc.change_note or "",
-        "READERS": doc.readers or ("Every account" if doc.ack_required else "None"),
+        "READERS": reader_names(doc) or ("Every account" if doc.ack_required else "None"),
         "LINK": f"{get_config().base_url.rstrip('/')}/d/{doc.ref}" if doc.ref else "",
     }
     copyright_pattern = (site or {}).get("cover_copyright", "")

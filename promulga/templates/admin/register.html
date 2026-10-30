@@ -12,6 +12,7 @@
       {% for t in site.doc_types %}<option {{ 'selected' if t.name == type }}>{{ t.name }}</option>{% endfor %}</select></div>
     {% if user.has_role('manager') %}<label class="check"><input type="checkbox" name="mine" value="true" {{ 'checked' if mine }}> Only mine</label>{% endif %}
     <div><button class="btn btn-sm" type="submit">Filter</button>
+      <a class="btn btn-sm btn-outline" href="/admin/documents/tree">Hierarchy</a>
       <a class="btn btn-sm btn-outline" href="/admin/documents.csv?{{ request.url.query }}">Export CSV</a></div>
   </form>
 </div></div>

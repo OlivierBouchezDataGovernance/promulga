@@ -1,0 +1,25 @@
+{% extends "admin/base.html" %}
+{% from "admin/_macros.html" import status with context %}
+{% block title %}Hierarchy - {{ site.site_name }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="container">
+  <div class="crumbs"><a href="/admin/documents">Register</a> / hierarchy</div>
+  <h1>Hierarchy of the documents</h1>
+  <p class="muted">Charter &gt; Policy &gt; Standard, Guideline, Procedure. Every document hangs under its parent, except the Charter.</p>
+</div></div>
+<section class="section"><div class="container">
+  <div class="card">
+  {% if rows %}
+    <div class="table-wrap"><table>
+      <thead><tr><th>Document</th><th>Type</th><th>Status</th><th>Version</th></tr></thead>
+      <tbody>{% for depth, d in rows %}
+        <tr><td style="padding-left:{{ 0.6 + depth * 1.6 }}rem">{% if depth %}<span class="muted">&#8627;</span> {% endif %}<a href="/admin/documents/{{ d.id }}">{{ d.ref }}</a> {{ d.title }}
+            {% if not d.parent_id and d.doc_type != 'Charter' and depth == 0 %}<span class="tag">no parent</span>{% endif %}</td>
+          <td class="small">{{ type_icon(site, d.doc_type, 14) }} {{ d.doc_type }}</td><td>{{ status(d.status) }}</td>
+          <td class="small">{{ d.current_version or '-' }}</td></tr>
+      {% endfor %}</tbody>
+    </table></div>
+  {% else %}<p class="empty">No document yet.</p>{% endif %}
+  </div>
+</div></section>
+{% endblock %}

@@ -46,10 +46,18 @@ def test_full_cycle_with_rejection_and_new_revision(db):
     with pytest.raises(WorkflowError):
         workflow.check_in(db, owner, doc, "x.pdf", make_pdf())   # frozen during review
 
-    workflow.add_comment(db, rev, doc, "Define the scope.")
+    remark = workflow.add_comment(db, rev, doc, "Define the scope.")
     workflow.review_done(db, rev, doc)
     assert doc.status == "Revision"
     workflow.check_in(db, owner, doc, "draft.pdf", make_pdf("v2"), "scope defined")
+    with pytest.raises(WorkflowError, match="Decide on every remark"):
+        workflow.submit(db, owner, doc)
+    with pytest.raises(WorkflowError, match="Explain why"):
+        workflow.decide_comment(db, owner, doc, remark, "rejected", "")
+    with pytest.raises(WorkflowError, match="only reply"):
+        workflow.add_comment(db, rev, doc, "One more thing.")      # no second review round
+    workflow.add_comment(db, rev, doc, "Thanks.", parent_id=remark.id)
+    workflow.decide_comment(db, owner, doc, remark, "accepted")
     workflow.submit(db, owner, doc)
     assert doc.status == "Approval"
 

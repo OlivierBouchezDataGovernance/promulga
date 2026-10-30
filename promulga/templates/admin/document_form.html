@@ -1,5 +1,28 @@
 {% extends "admin/base.html" %}
 {% from "admin/_macros.html" import term_checkboxes %}
+{# A participant field: the existing users with a check box each (filter, select all), plus free e-mails. #}
+{% macro picker(name, label, hint, people, value) %}
+  {% set chosen = (value or '').replace(';', ',').split(',') | map('trim') | map('lower') | select | list %}
+  {% set known = people | map(attribute='email') | map('lower') | list %}
+  <fieldset class="picker" data-picker="{{ name }}">
+    <legend>{{ label }} <span class="hint">{{ hint }}</span></legend>
+    <div class="picker-tools">
+      <input type="search" class="picker-filter" placeholder="Filter by name or e-mail" aria-label="Filter: {{ label }}">
+      <button type="button" class="btn btn-sm btn-outline" data-all>Select all</button>
+      <button type="button" class="btn btn-sm btn-outline" data-none>Clear</button>
+      <span class="picker-count small muted"></span>
+    </div>
+    <div class="picker-list">
+      {% for u in people %}
+      <label class="check picker-item" data-text="{{ (u.display ~ ' ' ~ u.email) | lower }}">
+        <input type="checkbox" name="{{ name }}_pick" value="{{ u.email }}" {{ 'checked' if u.email | lower in chosen }}>
+        {{ u.display }} <span class="muted small">{{ u.email }}</span></label>
+      {% else %}<p class="small muted">No account yet: type the e-mail addresses below.</p>{% endfor %}
+    </div>
+    <label class="small" for="{{ name }}">Other people <span class="hint">(e-mails separated by commas; they are invited)</span></label>
+    <input type="text" id="{{ name }}" name="{{ name }}" value="{{ chosen | reject('in', known) | join(', ') }}">
+  </fieldset>
+{% endmacro %}
 {% block title %}{{ 'Edit ' ~ doc.ref if doc else 'New document' }} - {{ site.site_name }}{% endblock %}
 {% block content %}
 <div class="page-head"><div class="container">
@@ -19,8 +42,14 @@
       {% for t in site.doc_types %}<option value="{{ t.name }}" {{ 'selected' if form.doc_type == t.name }}>{{ t.name }} ({{ t.prefix }})</option>{% endfor %}
     </select>
     {% endif %}
-    <label for="summary">Summary <span class="hint">(shown on the portal)</span></label>
-    <textarea id="summary" name="summary" rows="3" maxlength="2000">{{ form.summary or '' }}</textarea>
+    <label for="parent_id">Parent document <span class="hint" id="parent-hint"></span></label>
+    <select id="parent_id" name="parent_id" data-type="{{ doc.doc_type if doc else '' }}">
+      <option value="">- none -</option>
+      {% for p in parents %}<option value="{{ p.id }}" data-type="{{ p.doc_type }}" {{ 'selected' if (form.parent_id or '') | string == p.id | string }}>{{ p.ref }} - {{ p.title }} ({{ p.doc_type }})</option>{% endfor %}
+    </select>
+    <p class="hint">Charter &gt; Policy &gt; Standard, Guideline, Procedure: every document hangs under a parent, except the Charter.</p>
+    <label for="summary">Description <span class="hint">(one sentence, 300 characters at most: title page and portal)</span></label>
+    <textarea id="summary" name="summary" rows="3" maxlength="300">{{ form.summary or '' }}</textarea>
 
     <div class="row">
       <div><label for="classification">Classification <span class="hint">(printed on the cover page)</span></label>
@@ -33,24 +62,30 @@
     <p class="hint">External and commercial publications may be exported to a public web site. Limited distribution
       and confidential documents are shown on the portal only to their participants and to Document Managers, after sign-in.</p>
 
-    <label for="owner">Owner <span class="hint">(one e-mail address)</span></label>
-    <input id="owner" type="email" name="owner" value="{{ form.owner or '' }}" list="people" required>
-    <label for="reviewers">Reviewers <span class="hint">(e-mails separated by commas; may be empty)</span></label>
-    <textarea id="reviewers" name="reviewers" rows="2">{{ form.reviewers or '' }}</textarea>
-    <label for="approvers">Approvers <span class="hint">(at least one)</span></label>
-    <textarea id="approvers" name="approvers" rows="2" required>{{ form.approvers or '' }}</textarea>
-    <datalist id="people">{% for u in users %}<option value="{{ u.email }}">{{ u.display }}</option>{% endfor %}</datalist>
-    {% if users %}<p class="hint">Known people: {% for u in users %}{{ u.email }}{{ ', ' if not loop.last }}{% endfor %}</p>{% endif %}
+    {% set owner_known = (form.owner or '') | lower in (users | map(attribute='email') | map('lower') | list) %}
+    <label for="owner">Owner</label>
+    <div class="row">
+      <select id="owner" name="owner" required>
+        <option value="">- choose the owner -</option>
+        {% for u in users %}<option value="{{ u.email }}" {{ 'selected' if (form.owner or '') | lower == u.email | lower }}>{{ u.display }} ({{ u.email }})</option>{% endfor %}
+        <option value="__other" {{ 'selected' if form.owner and not owner_known }}>Someone else (e-mail)...</option>
+      </select>
+      <input id="owner_other" type="email" name="owner_other" placeholder="owner@example.org" aria-label="E-mail of the owner"
+             value="{{ form.owner if form.owner and not owner_known else '' }}">
+    </div>
+    {{ picker("reviewers", "Reviewers", "(may be empty)", users, form.reviewers) }}
+    {{ picker("approvers", "Approvers", "(the owner and at least one other person)", users, form.approvers) }}
 
     <div class="row">
       <div><label for="review_months">Periodic review <span class="hint">(months; empty = default {{ site.review_months }}, 0 = none)</span></label>
         <input id="review_months" type="number" min="0" max="120" name="review_months" value="{{ form.review_months if form.review_months is not none else '' }}"></div>
       <div><label class="check" style="margin-top:2.2rem"><input type="checkbox" name="ack_required" value="1" {{ 'checked' if form.ack_required }}> Readers must acknowledge each version</label></div>
     </div>
-    <label for="readers">Mandatory readers <span class="hint">(e-mails separated by commas, chosen by the Data Owner; empty = every account)</span></label>
-    <textarea id="readers" name="readers" rows="2">{{ form.readers or '' }}</textarea>
+    {{ picker("readers", "Mandatory readers", "(chosen by the Data Owner; none = every account)", all_users, form.readers) }}
     {% if not doc %}
     <label for="file">Initial file <span class="hint">(optional{% if site.template_asset %}; otherwise the template is used{% endif %})</span></label>
+    {% if pending %}<p class="notice small">{{ icon("file-text", 16) }} The file <strong>{{ pending[1] }}</strong> you sent is kept: it is used when you save,
+      unless you choose another one.<input type="hidden" name="pending_file" value="{{ pending[0] }}"></p>{% endif %}
     <input id="file" type="file" name="file">
     <p class="hint">Word (.docx) gets the automatic cover page and variables ({{ '{{TITLE}}' }}, {{ '{{VERSION}}' }}...). Without a file, a blank Word document with its cover page is created.</p>
     {% endif %}
@@ -66,4 +101,63 @@
   </div>
 </form>
 </div></section>
+{% endblock %}
+{% block scripts %}
+<script>
+  // Participant lists: filter, select all / clear, counter; the owner is proposed as an approver.
+  (function () {
+    document.querySelectorAll('.picker').forEach(function (box) {
+      var items = Array.prototype.slice.call(box.querySelectorAll('.picker-item'));
+      var count = box.querySelector('.picker-count'), filter = box.querySelector('.picker-filter');
+      function update() {
+        var n = items.filter(function (i) { return i.querySelector('input').checked; }).length;
+        count.textContent = n ? n + ' selected' : '';
+      }
+      filter.addEventListener('input', function () {
+        var q = filter.value.trim().toLowerCase();
+        items.forEach(function (i) { i.hidden = q && i.getAttribute('data-text').indexOf(q) < 0; });
+      });
+      function setAll(v) { items.forEach(function (i) { if (!i.hidden) { i.querySelector('input').checked = v; } }); update(); }
+      box.querySelector('[data-all]').addEventListener('click', function () { setAll(true); });
+      box.querySelector('[data-none]').addEventListener('click', function () { setAll(false); });
+      box.addEventListener('change', update);
+      update();
+    });
+    var owner = document.getElementById('owner'), other = document.getElementById('owner_other');
+    var approvers = document.querySelector('[data-picker="approvers"]'), auto = null;
+    function ownerChanged() {
+      other.hidden = owner.value !== '__other';
+      other.required = owner.value === '__other';
+      if (!approvers) { return; }
+      if (auto) { auto.checked = false; auto = null; }
+      var box = approvers.querySelector('input[value="' + owner.value + '"]');
+      if (box && !box.checked) { box.checked = true; auto = box; }
+      approvers.dispatchEvent(new Event('change'));
+    }
+    owner.addEventListener('change', ownerChanged);
+    other.hidden = owner.value !== '__other';
+  })();
+
+  // Offer only the parents allowed for the chosen type (the server checks again).
+  (function () {
+    var rules = {{ parent_rules | tojson }};
+    var parent = document.getElementById('parent_id'), type = document.getElementById('doc_type');
+    var hint = document.getElementById('parent-hint');
+    function refresh() {
+      var t = type ? type.value : parent.getAttribute('data-type'), allowed = rules[t];
+      var top = Array.isArray(allowed) && allowed.length === 0;
+      for (var i = 1; i < parent.options.length; i++) {
+        var o = parent.options[i], ok = !top && (!allowed || allowed.indexOf(o.getAttribute('data-type')) >= 0);
+        o.hidden = !ok; o.disabled = !ok;
+        if (!ok && o.selected) { parent.value = ''; }
+      }
+      parent.disabled = top;
+      parent.required = !!(allowed && allowed.length);
+      hint.textContent = top ? '(none: top of the hierarchy)'
+        : (allowed ? '(required: a ' + allowed.join(' or ') + ')' : '(optional)');
+    }
+    if (type) { type.addEventListener('change', refresh); }
+    refresh();
+  })();
+</script>
 {% endblock %}

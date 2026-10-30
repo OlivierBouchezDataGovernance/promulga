@@ -80,7 +80,7 @@ def test_template_by_document_type(db):
                                    reviewer_emails=[], approver_emails=["app@example.org"], term_ids=[], file=None)
     std = workflow.create_document(db, admin, title="Naming", doc_type="Standard", summary="",
                                    owner_email="o@example.org", reviewer_emails=[],
-                                   approver_emails=["app@example.org"], term_ids=[], file=None)
+                                   approver_emails=["app@example.org"], term_ids=[], file=None, parent_id=pol.id)
     assert "Policy template Access" in docx_meta.docx_paragraphs(storage.read_bytes(pol.latest_revision.storage_path))
     assert "Policy template" not in " ".join(
         docx_meta.docx_paragraphs(storage.read_bytes(std.latest_revision.storage_path)))

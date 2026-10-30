@@ -5,8 +5,8 @@ How it works (all calls are signed with ONLYOFFICE_JWT_SECRET):
 1. The document page opens the editor with a configuration that says who the
    user is and what they may do in the current stage:
      - Draft / Revision: the owner edits (and replies to comments);
-     - Review: reviewers comment and suggest changes (track changes), the
-       owner may only comment; nobody rewrites the text;
+     - Review: reviewers comment (no edits, no tracked changes), the owner
+       may only comment; nobody rewrites the text;
      - Approval / Published: everybody reads, comments included.
 2. OnlyOffice downloads the latest revision from Promulga (signed URL).
 3. Everybody works on the SAME file at the same time; comments of every
@@ -78,7 +78,9 @@ def permissions(doc: Document, user: User) -> dict:
     editor = doc.status in (DRAFT, REVISION) and (owner or is_manager(user))
     reviewer = doc.status == REVIEW and acting_assignment(doc, user, REVIEWER) is not None
     commenter = editor or reviewer or (doc.status == REVIEW and owner)
-    return {"edit": editor, "review": editor or reviewer, "comment": commenter, "download": True, "print": True,
+    # Reviewers comment only: no editing, no tracked-change suggestions. The Word file is handed out
+    # in Draft and Revision only, to the people who edit it.
+    return {"edit": editor, "review": editor, "comment": commenter, "download": editor, "print": True,
             "copy": True, "modifyFilter": False, "fillForms": editor}
 
 

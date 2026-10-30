@@ -34,6 +34,7 @@ DEFAULTS: dict[str, Any] = {
     "portal_access": "public",      # public | login
     "portal_show_owner": True,
     # Documents --------------------------------------------------------------
+    "default_approvers": [],        # e-mails proposed as approvers of new documents ([] = the administrators)
     "doc_types": [
         {"name": "Policy", "prefix": "POL", "icon": "shield-check"},
         {"name": "Standard", "prefix": "STD", "icon": "ruler"},

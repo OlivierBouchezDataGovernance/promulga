@@ -22,7 +22,8 @@ from sqlalchemy.orm import Session, selectinload
 
 from .. import naming, site_settings, storage, workflow
 from ..db import get_db
-from ..models import RETIRED, Acknowledgment, Document, Publication, Taxonomy, Term, User
+from ..models import (RETIRED, TRANSLATION_LANGUAGES, Acknowledgment, Document, ExternalReference, Publication,
+                      Taxonomy, Term, Translation, User)
 from .deps import LoginRequired, csrf_protect, current_user, flash, redirect, render
 
 router = APIRouter()
@@ -182,8 +183,46 @@ def document_page(ref: str, request: Request, db: Session = Depends(get_db),
     if doc.ack_required and user and doc.latest_publication:
         acknowledged = db.query(Acknowledgment).filter_by(publication_id=doc.latest_publication.id,
                                                           user_id=user.id).first()
+    def on_portal(d: Document | None) -> bool:
+        return d is not None and bool(d.current_version) and d.status != RETIRED and d.readable_by(user)
+
+    translations = [t for t in (doc.translation(lang) for lang in TRANSLATION_LANGUAGES) if t]
     return render(request, db, "portal/document.html", user=user, doc=doc, retired=doc.status == RETIRED,
-                  acknowledged=acknowledged)
+                  acknowledged=acknowledged, parent=doc.parent if on_portal(doc.parent) else None,
+                  children=[c for c in doc.children if on_portal(c)], translations=translations)
+
+
+def _portal_doc(db: Session, ref: str, user: User | None, path: str) -> Document:
+    doc = db.query(Document).filter_by(ref=ref).first()
+    if doc is None or doc.status == RETIRED or not doc.current_version:
+        raise HTTPException(404)
+    if not doc.readable_by(user):
+        if user is None:
+            raise LoginRequired(path)
+        raise HTTPException(404)
+    return doc
+
+
+@router.get("/d/{ref}/translations/{tr_id}")
+def document_translation(ref: str, tr_id: int, db: Session = Depends(get_db),
+                         user: User | None = Depends(portal_user)):
+    doc = _portal_doc(db, ref, user, f"/d/{ref}")
+    t = db.get(Translation, tr_id)
+    if t is None or t.document_id != doc.id:
+        raise HTTPException(404)
+    return FileResponse(storage.absolute(t.storage_path), media_type=t.content_type,
+                        filename=f"{doc.ref}-v{t.version}-{t.language.upper()}{storage.extension(t.filename)}",
+                        content_disposition_type="inline")
+
+
+@router.get("/d/{ref}/references/{ref_id}")
+def document_reference(ref: str, ref_id: int, db: Session = Depends(get_db),
+                       user: User | None = Depends(portal_user)):
+    doc = _portal_doc(db, ref, user, f"/d/{ref}")
+    r = db.get(ExternalReference, ref_id)
+    if r is None or r not in doc.references or not r.storage_path:
+        raise HTTPException(404)
+    return FileResponse(storage.absolute(r.storage_path), filename=r.filename, content_disposition_type="inline")
 
 
 @router.post("/d/{ref}/acknowledge", dependencies=[Depends(csrf_protect)])

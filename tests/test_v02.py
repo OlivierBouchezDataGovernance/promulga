@@ -49,7 +49,8 @@ def test_global_ids_and_reference_pattern(db):
     a = workflow.create_document(db, admin, title="A", doc_type="Policy", summary="", owner_email="o@example.org",
                                  reviewer_emails=[], approver_emails=["p@example.org"], term_ids=[], file=None)
     b = workflow.create_document(db, admin, title="B", doc_type="Standard", summary="", owner_email="o@example.org",
-                                 reviewer_emails=[], approver_emails=["p@example.org"], term_ids=[], file=None)
+                                 reviewer_emails=[], approver_emails=["p@example.org"], term_ids=[], file=None,
+                                 parent_id=a.id)
     assert (a.ref, b.ref) == ("POL-0001", "STD-0002")          # one global sequence, unique in the system
     assert naming.id_label(9999) == "9999" and naming.id_label(10000) == "10000"
 
@@ -102,7 +103,12 @@ def test_segregation_of_duties_warning_and_delegation(db):
     doc = workflow.create_document(db, admin, title="SoD", doc_type="Policy", summary="", owner_email="o@example.org",
                                    reviewer_emails=[], approver_emails=["o@example.org", "boss@example.org"],
                                    term_ids=[], file=None)
-    assert workflow.segregation_warnings(doc)
+    assert workflow.segregation_warnings(doc) == []          # the owner approves, but not alone: fine
+    alone = workflow.create_document(db, admin, title="Alone", doc_type="Policy", summary="", owner_email="o@example.org",
+                                     reviewer_emails=[], approver_emails=["o@example.org"], term_ids=[], file=None)
+    assert "only approver" in workflow.segregation_warnings(alone)[0]
+    with pytest.raises(WorkflowError, match="only approver"):
+        workflow.submit(db, _user(db, "o@example.org"), alone)
     o, boss = _user(db, "o@example.org"), _user(db, "boss@example.org")
     workflow.check_in(db, o, doc, "final.pdf", make_pdf("SoD"))
     deputy = User(email="deputy@example.org", role="contributor")
@@ -195,7 +201,7 @@ def test_onlyoffice_permissions_and_signed_config(db):
     assert onlyoffice.permissions(doc, o)["edit"] and not onlyoffice.permissions(doc, r)["comment"]
     workflow.submit(db, o, doc)
     p_owner, p_rev = onlyoffice.permissions(doc, o), onlyoffice.permissions(doc, r)
-    assert not p_owner["edit"] and p_owner["comment"] and p_rev["review"] and p_rev["comment"] and not p_rev["edit"]
+    assert not p_owner["edit"] and p_owner["comment"] and not p_rev["review"] and p_rev["comment"] and not p_rev["edit"]
     import jwt
     config = onlyoffice.editor_config(doc, doc.latest_revision, r)
     assert jwt.decode(config["token"], "s3cret", algorithms=["HS256"])["document"]["key"] == config["document"]["key"]

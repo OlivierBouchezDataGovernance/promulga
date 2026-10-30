@@ -253,3 +253,14 @@ iframe.mail { width: 100%; height: 520px; border: 1px solid var(--border); borde
 @media print {
   .navbar, .footer, .actions, form { display: none !important; }
 }
+
+/* Participant lists (owner, reviewers, approvers, readers) */
+.picker { border: 1px solid var(--border, #e2e8f0); border-radius: 8px; padding: .5rem .8rem .8rem; margin: .9rem 0; }
+.picker legend { font-weight: 600; padding: 0 .3rem; }
+.picker-tools { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin-bottom: .4rem; }
+.picker-tools .picker-filter { flex: 1 1 12rem; margin: 0; }
+.picker-list { max-height: 13rem; overflow-y: auto; border: 1px solid var(--border, #e2e8f0); border-radius: 6px;
+               padding: .2rem .6rem; background: var(--surface, #fff); }
+.picker-item { margin: .25rem 0; }
+.decision-form { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin-top: .4rem; }
+.decision-form input[type=text] { flex: 1 1 16rem; margin: 0; }

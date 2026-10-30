@@ -20,13 +20,14 @@ from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingRes
 from sqlalchemy import or_
 from sqlalchemy.orm import Session, selectinload
 
-from .. import (accounts, docx_meta, export, icons, insights, mailer, naming, onlyoffice, reminders, site_settings,
-               storage, workflow)
+from .. import (accounts, docx_meta, export, icons, insights, mailer, naming, onlyoffice, pdf, reminders,
+               site_settings, storage, workflow)
 from ..config import get_config
 from ..db import get_db
 from ..models import (
-    ACTIVE_STATUSES, APPROVAL, REVIEW, ROLES, STATUSES, ApiToken, Assignment, Comment, Document, Event, OutboxMail,
-    PasskeyCredential, Publication, Revision, Taxonomy, Term, User, WebhookDelivery,
+    ACTIVE_STATUSES, APPROVAL, REVIEW, ROLES, STATUSES, TRANSLATION_LANGUAGES, ApiToken, Assignment, Comment,
+    Document, Event, ExternalReference, OutboxMail, PasskeyCredential, Publication, Revision, Taxonomy, Term,
+    Translation, User, WebhookDelivery,
 )
 from ..security import check_password_strength, hash_password, verify_password
 from .deps import (
@@ -76,6 +77,65 @@ def _get_doc(db: Session, doc_id: int, user: User) -> Document:
     return doc
 
 
+def _people(text: str, picks: list[str] | None) -> list[str]:
+    """E-mails of a participant field: the users checked in the list, then the addresses typed."""
+    return list(dict.fromkeys([p.strip().lower() for p in picks or [] if p.strip()] + accounts.parse_emails(text)))
+
+
+def _owner(choice: str, other: str) -> str:
+    return (other or "").strip() if (choice or "") in ("", "__other") else choice
+
+
+def _form_users(db: Session) -> dict:
+    active = db.query(User).filter(User.active.is_(True)).order_by(User.name, User.email).all()
+    return {"users": [u for u in active if u.role != "viewer"], "all_users": active}
+
+
+PENDING = "pending"   # files received with a creation form that was refused, kept for the next attempt
+
+
+def _keep_upload(upload: tuple[str, bytes]) -> str:
+    """Keeps the file of a refused creation form (browsers empty file fields when a page is shown again)."""
+    token = secrets.token_hex(12)
+    folder = get_config().files_dir / PENDING
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / f"{token}.bin").write_bytes(upload[1])
+    (folder / f"{token}.name").write_text(storage.safe_filename(upload[0]), encoding="utf-8")
+    return token
+
+
+def _pending_upload(token: str) -> tuple[str, bytes] | None:
+    if not re.fullmatch(r"[0-9a-f]{24}", token or ""):
+        return None
+    folder = get_config().files_dir / PENDING
+    data, name = folder / f"{token}.bin", folder / f"{token}.name"
+    if not data.is_file() or not name.is_file():
+        return None
+    return name.read_text(encoding="utf-8"), data.read_bytes()
+
+
+def _drop_pending(token: str) -> None:
+    if re.fullmatch(r"[0-9a-f]{24}", token or ""):
+        for ext in (".bin", ".name"):
+            (get_config().files_dir / PENDING / f"{token}{ext}").unlink(missing_ok=True)
+
+
+def _parent_id(value: str) -> int | None:
+    value = (value or "").strip()
+    return int(value) if value.isdigit() else None
+
+
+def _parent_options(db: Session, doc: Document | None = None) -> dict:
+    """Candidates for the 'Parent document' list, and the parent types allowed per document type."""
+    site = site_settings.get_all(db)
+    if doc is not None:
+        return {"parents": workflow.parent_candidates(db, site, doc.doc_type, doc),
+                "parent_rules": {doc.doc_type: workflow.parent_types(site, doc.doc_type)}}
+    parents = db.query(Document).filter(Document.status != "Retired").order_by(Document.ref).all()
+    return {"parents": parents,
+            "parent_rules": {t["name"]: workflow.parent_types(site, t["name"]) for t in site["doc_types"]}}
+
+
 def _taxonomies(db: Session) -> list[Taxonomy]:
     return db.query(Taxonomy).options(selectinload(Taxonomy.terms)).order_by(Taxonomy.sort, Taxonomy.name).all()
 
@@ -93,7 +153,7 @@ def dashboard(request: Request, db: Session = Depends(get_db), user: User = Depe
         a.user_id == user.id and a.role == "reviewer" and a.acted_at is None for a in d.assignments)]
     to_approve = [d for d in active if d.status == APPROVAL and any(
         a.user_id == user.id and a.role == "approver" and a.acted_at is None for a in d.assignments)]
-    following = [d for d in active if workflow.is_participant(d, user)
+    following = [d for d in active if workflow.is_participant(d, user) and workflow.can_see(d, user)
                  and d not in to_write + to_review + to_approve]
     overdue = [d for d in active if d.is_overdue] if workflow.is_manager(user) else []
     return render(request, db, "admin/dashboard.html", user=user, to_write=to_write, to_review=to_review,
@@ -119,9 +179,15 @@ def _register_query(db: Session, user: User, status: str, doc_type: str, q: str,
 @router.get("/documents")
 def register(request: Request, status: str = "", type: str = "", q: str = "", mine: bool = False,
              db: Session = Depends(get_db), user: User = Depends(require_contributor)):
-    docs = _register_query(db, user, status, type, q, mine).all()
+    docs = [d for d in _register_query(db, user, status, type, q, mine).all() if workflow.can_see(d, user)]
     return render(request, db, "admin/register.html", user=user, docs=docs, statuses=STATUSES,
                   status=status, type=type, q=q, mine=mine, pending=workflow.pending_users)
+
+
+@router.get("/documents/tree")
+def register_tree(request: Request, db: Session = Depends(get_db), user: User = Depends(require_contributor)):
+    rows = [(depth, d) for depth, d in workflow.tree(db) if workflow.can_see(d, user)]
+    return render(request, db, "admin/tree.html", user=user, rows=rows)
 
 
 @router.get("/documents.csv")
@@ -146,9 +212,11 @@ def register_csv(status: str = "", type: str = "", q: str = "", mine: bool = Fal
 
 @router.get("/documents/new")
 def new_document_form(request: Request, db: Session = Depends(get_db), user: User = Depends(require_manager)):
-    users = db.query(User).filter(User.active.is_(True), User.role != "viewer").order_by(User.email).all()
+    defaults = workflow.default_approvers(db, site_settings.get_all(db))
     return render(request, db, "admin/document_form.html", user=user, doc=None, taxonomies=_taxonomies(db),
-                  users=users, selected_terms=set(), form={})
+                  selected_terms=set(), default_approvers=defaults,
+                  form={"parent_id": request.query_params.get("parent", ""), "approvers": ", ".join(defaults)},
+                  **_form_users(db), **_parent_options(db))
 
 
 @router.post("/documents/new", dependencies=[Depends(csrf_protect)])
@@ -157,28 +225,40 @@ async def new_document(request: Request, title: str = Form(""), doc_type: str = 
                        terms: list[str] = Form([]), file: UploadFile | None = File(None),
                        review_months: str = Form(""), ack_required: str = Form(""),
                        classification: str = Form("internal"), keywords: str = Form(""),
-                       readers: str = Form(""),
+                       readers: str = Form(""), parent_id: str = Form(""), owner_other: str = Form(""),
+                       reviewers_pick: list[str] = Form([]), approvers_pick: list[str] = Form([]),
+                       readers_pick: list[str] = Form([]), pending_file: str = Form(""),
                        db: Session = Depends(get_db), user: User = Depends(require_manager)):
+    owner = _owner(owner, owner_other)
+    upload = None
     try:
-        upload = await _read_upload(file)
+        upload = await _read_upload(file) or _pending_upload(pending_file)
         doc = workflow.create_document(
             db, user, title=title, doc_type=doc_type, summary=summary, owner_email=owner,
-            reviewer_emails=accounts.parse_emails(reviewers), approver_emails=accounts.parse_emails(approvers),
+            reviewer_emails=_people(reviewers, reviewers_pick), approver_emails=_people(approvers, approvers_pick),
             term_ids=_int_list(terms), file=upload, review_months=_months(review_months),
             ack_required=ack_required == "1", classification=classification, keywords=keywords,
-            readers=accounts.parse_emails(readers))
+            readers=_people(readers, readers_pick), parent_id=_parent_id(parent_id))
         db.commit()
     except (workflow.WorkflowError, accounts.AccountError, ValueError) as exc:
         db.rollback()
         flash(request, str(exc), "error")
-        users = db.query(User).filter(User.active.is_(True), User.role != "viewer").order_by(User.email).all()
+        if upload is not None and not _pending_upload(pending_file):
+            _drop_pending(pending_file)
+            pending_file = _keep_upload(upload)
         return render(request, db, "admin/document_form.html", user=user, doc=None, taxonomies=_taxonomies(db),
-                      users=users, selected_terms=set(_int_list(terms)), status_code=400,
+                      selected_terms=set(_int_list(terms)), status_code=400,
+                      pending=(pending_file, upload[0]) if upload is not None else None,
+                      default_approvers=workflow.default_approvers(db, site_settings.get_all(db)),
                       form={"title": title, "doc_type": doc_type, "summary": summary, "owner": owner,
-                            "reviewers": reviewers, "approvers": approvers, "classification": classification,
-                            "keywords": keywords, "readers": readers},
-                      messages=request.session.pop("flash", []))
-    flash(request, f"{doc.ref} created. The owner received an e-mail.", "success")
+                            "reviewers": ", ".join(_people(reviewers, reviewers_pick)),
+                            "approvers": ", ".join(_people(approvers, approvers_pick)),
+                            "classification": classification, "keywords": keywords,
+                            "readers": ", ".join(_people(readers, readers_pick)), "parent_id": parent_id},
+                      messages=request.session.pop("flash", []), **_form_users(db), **_parent_options(db))
+    _drop_pending(pending_file)
+    flash(request, f"{doc.ref} created with {'the file ' + upload[0] if upload else 'the template of the type'}. "
+                   "The owner received an e-mail.", "success")
     _warn(request, doc, upload[0] if upload else None)
     return redirect(f"/admin/documents/{doc.id}")
 
@@ -187,14 +267,15 @@ async def new_document(request: Request, title: str = Form(""), doc_type: str = 
 def edit_document_form(doc_id: int, request: Request, db: Session = Depends(get_db),
                        user: User = Depends(require_manager)):
     doc = _get_doc(db, doc_id, user)
-    users = db.query(User).filter(User.active.is_(True), User.role != "viewer").order_by(User.email).all()
     form = {"title": doc.title, "doc_type": doc.doc_type, "summary": doc.summary, "owner": doc.owner.email,
             "reviewers": ", ".join(a.user.email for a in doc.reviewers),
             "approvers": ", ".join(a.user.email for a in doc.approvers),
             "review_months": "" if doc.review_months is None else doc.review_months, "ack_required": doc.ack_required,
-            "classification": doc.classification, "keywords": doc.keywords, "readers": doc.readers}
+            "classification": doc.classification, "keywords": doc.keywords, "readers": doc.readers,
+            "parent_id": str(doc.parent_id or "")}
     return render(request, db, "admin/document_form.html", user=user, doc=doc, taxonomies=_taxonomies(db),
-                  users=users, selected_terms={t.id for t in doc.terms}, form=form)
+                  selected_terms={t.id for t in doc.terms}, form=form, default_approvers=[],
+                  **_form_users(db), **_parent_options(db, doc))
 
 
 @router.post("/documents/{doc_id}/edit", dependencies=[Depends(csrf_protect)])
@@ -202,14 +283,18 @@ def edit_document(doc_id: int, request: Request, title: str = Form(""), summary:
                   owner: str = Form(""), reviewers: str = Form(""), approvers: str = Form(""),
                   terms: list[str] = Form([]), review_months: str = Form(""), ack_required: str = Form(""),
                   classification: str = Form("internal"), keywords: str = Form(""), readers: str = Form(""),
+                  parent_id: str = Form(""), owner_other: str = Form(""),
+                  reviewers_pick: list[str] = Form([]), approvers_pick: list[str] = Form([]),
+                  readers_pick: list[str] = Form([]),
                   db: Session = Depends(get_db), user: User = Depends(require_manager)):
     doc = _get_doc(db, doc_id, user)
+    owner = _owner(owner, owner_other)
     try:
         workflow.update_metadata(db, user, doc, title=title, summary=summary, term_ids=_int_list(terms),
                                  review_months=_months(review_months), ack_required=ack_required == "1",
                                  classification=classification, keywords=keywords,
-                                 readers=accounts.parse_emails(readers))
-        new_people = (owner.strip().lower(), accounts.parse_emails(reviewers), accounts.parse_emails(approvers))
+                                 readers=_people(readers, readers_pick), parent_id=_parent_id(parent_id))
+        new_people = (owner.strip().lower(), _people(reviewers, reviewers_pick), _people(approvers, approvers_pick))
         old_people = (doc.owner.email, [a.user.email for a in doc.reviewers], [a.user.email for a in doc.approvers])
         if new_people != old_people:
             workflow.update_participants(db, user, doc, owner_email=owner, reviewer_emails=new_people[1],
@@ -241,8 +326,13 @@ def document_page(doc_id: int, request: Request, db: Session = Depends(get_db),
     actions = workflow.allowed_actions(doc, user)
     latest = doc.latest_revision
     ack = workflow.acknowledgment_status(db, doc) if doc.ack_required and doc.publications else None
+    linked = {r.id for r in doc.references}
     return render(request, db, "admin/document.html", user=user, doc=doc, events=events, actions=actions,
-                  has_task=bool(actions - {"comment", "edit"}), max_mb=get_config().max_upload_mb,
+                  has_task=bool(actions - {"comment", "reply", "edit", "annex"}), max_mb=get_config().max_upload_mb,
+                  handles_file=workflow.handles_file(doc, user), remarks=workflow.remarks(doc),
+                  undecided=workflow.undecided(doc), languages=TRANSLATION_LANGUAGES,
+                  other_references=[r for r in db.query(ExternalReference).order_by(ExternalReference.title).all()
+                                    if r.id not in linked],
                   pending=workflow.pending_users(doc), sod=workflow.segregation_warnings(doc),
                   capability=docx_meta.capability_warning(latest.filename) if latest else "",
                   editor=onlyoffice.available(latest), ack=ack,
@@ -257,6 +347,8 @@ def download_revision(doc_id: int, rev_id: int, db: Session = Depends(get_db),
     if rev is None or rev.document_id != doc.id:
         raise HTTPException(404)
     ext = "." + rev.filename.rsplit(".", 1)[-1].lower() if "." in rev.filename else ""
+    if doc.status in ACTIVE_STATUSES and ext != ".pdf" and not workflow.handles_file(doc, user):
+        return redirect(f"/admin/documents/{doc.id}/revisions/{rev.id}/copy.pdf")
     name = naming.file_name(doc, ext, site_settings.get_all(db))
     data = storage.read_bytes(rev.storage_path)
     if docx_meta.supports_metadata(rev.filename) and rev.id == doc.latest_revision.id:
@@ -267,6 +359,35 @@ def download_revision(doc_id: int, rev_id: int, db: Session = Depends(get_db),
     from urllib.parse import quote
     return Response(data, media_type=rev.content_type,
                     headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"})
+
+
+@router.get("/documents/{doc_id}/revisions/{rev_id}/copy.pdf")
+def review_copy(doc_id: int, rev_id: int, request: Request, db: Session = Depends(get_db),
+                user: User = Depends(require_contributor)):
+    """PDF 'review copy' of a revision: what reviewers and approvers read instead of the Word file."""
+    doc = _get_doc(db, doc_id, user)
+    rev = db.get(Revision, rev_id)
+    if rev is None or rev.document_id != doc.id:
+        raise HTTPException(404)
+    try:
+        data = workflow.review_copy(db, doc, rev)
+    except pdf.ConversionError as exc:
+        flash(request, f"The PDF copy cannot be made: {exc}", "error")
+        return redirect(f"/admin/documents/{doc_id}")
+    name = naming.file_name(doc, ".pdf", site_settings.get_all(db)).replace(".pdf", "-review-copy.pdf")
+    from urllib.parse import quote
+    return Response(data, media_type="application/pdf",
+                    headers={"Content-Disposition": f"inline; filename*=UTF-8''{quote(name)}"})
+
+
+@router.get("/documents/{doc_id}/approval.pdf")
+def approval_pdf(doc_id: int, db: Session = Depends(get_db), user: User = Depends(require_contributor)):
+    """The PDF submitted for approval (frozen while the document is in Approval)."""
+    doc = _get_doc(db, doc_id, user)
+    if not doc.approval_pdf_path:
+        raise HTTPException(404)
+    return FileResponse(storage.absolute(doc.approval_pdf_path), media_type="application/pdf",
+                        filename=f"{doc.ref}-v{doc.next_version}-for-approval.pdf", content_disposition_type="inline")
 
 
 @router.get("/documents/{doc_id}/comments/{comment_id}/attachment")
@@ -389,6 +510,121 @@ def resolve(doc_id: int, comment_id: int, request: Request, resolved: str = Form
                     "Comment updated.")
     response.headers["location"] += "#comments"
     return response
+
+
+@router.post("/documents/{doc_id}/comments/{comment_id}/decide", dependencies=[Depends(csrf_protect)])
+def decide(doc_id: int, comment_id: int, request: Request, decision: str = Form(""), note: str = Form(""),
+           db: Session = Depends(get_db), user: User = Depends(require_contributor)):
+    doc = _get_doc(db, doc_id, user)
+    c = db.get(Comment, comment_id)
+    if c is None:
+        raise HTTPException(404)
+    response = _run(request, db, doc_id, lambda: workflow.decide_comment(db, user, doc, c, decision, note),
+                    "Decision recorded.")
+    response.headers["location"] += f"#c{comment_id}"
+    return response
+
+
+@router.get("/documents/{doc_id}/comments.csv")
+def comments_csv(doc_id: int, db: Session = Depends(get_db), user: User = Depends(require_contributor)):
+    doc = _get_doc(db, doc_id, user)
+    out = io.StringIO()
+    csv.writer(out).writerows(workflow.comments_csv_rows(doc))
+    return StreamingResponse(iter([out.getvalue()]), media_type="text/csv",
+                             headers={"Content-Disposition": f"attachment; filename={doc.ref}-remarks.csv"})
+
+
+# ---------------------------------------------------------------------------
+# Annexes: translations and external references (owner and Document Managers, any stage)
+# ---------------------------------------------------------------------------
+
+@router.post("/documents/{doc_id}/translations", dependencies=[Depends(csrf_protect)])
+async def add_translation(doc_id: int, request: Request, language: str = Form(""), method: str = Form("machine"),
+                          file: UploadFile | None = File(None), db: Session = Depends(get_db),
+                          user: User = Depends(require_contributor)):
+    doc = _get_doc(db, doc_id, user)
+    try:
+        upload = await _read_upload(file)
+        if upload is None:
+            raise workflow.WorkflowError("Choose the translated file.")
+    except workflow.WorkflowError as exc:
+        flash(request, str(exc), "error")
+        return redirect(f"/admin/documents/{doc_id}#annexes")
+    response = _run(request, db, doc_id, lambda: workflow.add_translation(db, user, doc, language, upload, method),
+                    "Translation attached.")
+    response.headers["location"] += "#annexes"
+    return response
+
+
+@router.get("/documents/{doc_id}/translations/{tr_id}")
+def download_translation(doc_id: int, tr_id: int, db: Session = Depends(get_db),
+                         user: User = Depends(require_contributor)):
+    doc = _get_doc(db, doc_id, user)
+    t = db.get(Translation, tr_id)
+    if t is None or t.document_id != doc.id:
+        raise HTTPException(404)
+    return FileResponse(storage.absolute(t.storage_path), media_type=t.content_type,
+                        filename=f"{doc.ref}-v{t.version}-{t.language.upper()}{storage.extension(t.filename)}")
+
+
+@router.post("/documents/{doc_id}/translations/{tr_id}/delete", dependencies=[Depends(csrf_protect)])
+def delete_translation(doc_id: int, tr_id: int, request: Request, db: Session = Depends(get_db),
+                       user: User = Depends(require_contributor)):
+    doc = _get_doc(db, doc_id, user)
+    t = db.get(Translation, tr_id)
+    if t is None:
+        raise HTTPException(404)
+    response = _run(request, db, doc_id, lambda: workflow.remove_translation(db, user, doc, t), "Translation removed.")
+    response.headers["location"] += "#annexes"
+    return response
+
+
+@router.post("/documents/{doc_id}/references", dependencies=[Depends(csrf_protect)])
+async def add_reference(doc_id: int, request: Request, reference_id: str = Form(""), title: str = Form(""),
+                        issuer: str = Form(""), edition: str = Form(""), url: str = Form(""),
+                        file: UploadFile | None = File(None), db: Session = Depends(get_db),
+                        user: User = Depends(require_contributor)):
+    doc = _get_doc(db, doc_id, user)
+    if reference_id.isdigit():
+        ref = db.get(ExternalReference, int(reference_id))
+        if ref is None:
+            raise HTTPException(404)
+
+        def fn():
+            workflow.link_reference(db, user, doc, ref)
+    else:
+        try:
+            upload = await _read_upload(file)
+        except workflow.WorkflowError as exc:
+            flash(request, str(exc), "error")
+            return redirect(f"/admin/documents/{doc_id}#annexes")
+
+        def fn():
+            workflow.add_reference(db, user, doc, title=title, issuer=issuer, edition=edition, url=url, file=upload)
+    response = _run(request, db, doc_id, fn, "External reference linked.")
+    response.headers["location"] += "#annexes"
+    return response
+
+
+@router.post("/documents/{doc_id}/references/{ref_id}/unlink", dependencies=[Depends(csrf_protect)])
+def unlink_reference(doc_id: int, ref_id: int, request: Request, db: Session = Depends(get_db),
+                     user: User = Depends(require_contributor)):
+    doc = _get_doc(db, doc_id, user)
+    ref = db.get(ExternalReference, ref_id)
+    if ref is None:
+        raise HTTPException(404)
+    response = _run(request, db, doc_id, lambda: workflow.unlink_reference(db, user, doc, ref),
+                    "External reference unlinked.")
+    response.headers["location"] += "#annexes"
+    return response
+
+
+@router.get("/references/{ref_id}/file")
+def reference_file(ref_id: int, db: Session = Depends(get_db), user: User = Depends(require_contributor)):
+    ref = db.get(ExternalReference, ref_id)
+    if ref is None or not ref.storage_path:
+        raise HTTPException(404)
+    return FileResponse(storage.absolute(ref.storage_path), filename=ref.filename)
 
 
 ACTIONS = {
@@ -631,6 +867,7 @@ async def save_workflow(request: Request, draft_days: int = Form(28), review_day
                         template: UploadFile | None = File(None), remove_template: str = Form(""),
                         type_template: UploadFile | None = File(None), type_template_for: str = Form(""),
                         remove_type_templates: list[str] = Form([]), cover_copyright: str = Form(""),
+                        default_approvers: str = Form(""),
                         db: Session = Depends(get_db), user: User = Depends(require_admin)):
     types = []
     for line in doc_types.splitlines():
@@ -656,6 +893,7 @@ async def save_workflow(request: Request, draft_days: int = Form(28), review_day
         "doc_types": types,
         "review_months": max(0, min(120, review_months)),
         "review_reminder_days": max(0, min(365, review_reminder_days)),
+        "default_approvers": accounts.parse_emails(default_approvers),
     }
     if remove_template == "1":
         values["template_asset"] = ""

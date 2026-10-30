@@ -54,10 +54,19 @@ def test_full_cycle_over_http(client):
     login(client, "admin@example.org", "admin-password-123")
     form = client.get("/admin/documents/new")
     r = client.post("/admin/documents/new", data={
-        "csrf": csrf_of(form.text), "title": "Access Review Procedure", "doc_type": "Procedure",
-        "summary": "Quarterly access reviews.", "owner": "owner@example.org", "reviewers": "rev@example.org",
-        "approvers": "app@example.org"}, files={"file": ("draft.pdf", make_pdf("Access review"), "application/pdf")},
-        follow_redirects=False)
+        "csrf": csrf_of(form.text), "title": "Access Policy", "doc_type": "Policy", "owner": "owner@example.org",
+        "approvers": "app@example.org"}, follow_redirects=False)
+    policy_id = r.headers["location"].rsplit("/", 1)[-1]
+    form = client.get("/admin/documents/new")
+    assert "(required: a ' + allowed.join" in form.text and "POL-0001" in form.text
+    data = {"csrf": csrf_of(form.text), "title": "Access Review Procedure", "doc_type": "Procedure",
+            "summary": "Quarterly access reviews.", "owner": "owner@example.org", "reviewers": "rev@example.org",
+            "approvers": "app@example.org"}
+    r = client.post("/admin/documents/new", data=data, follow_redirects=False)
+    assert r.status_code == 400 and "hangs under a Policy" in r.text
+    r = client.post("/admin/documents/new", data={**data, "csrf": csrf_of(r.text), "parent_id": policy_id},
+                    files={"file": ("draft.pdf", make_pdf("Access review"), "application/pdf")},
+                    follow_redirects=False)
     assert r.status_code == 303
     doc_url = r.headers["location"]
 
@@ -76,6 +85,8 @@ def test_full_cycle_over_http(client):
     client.post("/auth/logout", data={"csrf": csrf_of(client.get("/admin").text)})
     login(client, "owner@example.org", "secret-password-1")
     page = client.get(doc_url)
+    remark = re.search(r'id="c(\d+)"', page.text).group(1)
+    client.post(f"{doc_url}/comments/{remark}/decide", data={"csrf": csrf_of(page.text), "decision": "accepted"})
     client.post(f"{doc_url}/checkin", data={"csrf": csrf_of(page.text), "note": "frequency added"},
                 files={"file": ("v2.pdf", make_pdf("Access review v2"), "application/pdf")})
     _act(client, doc_url, "submit")
@@ -85,11 +96,11 @@ def test_full_cycle_over_http(client):
     r = _act(client, doc_url, "approve")
     assert "Published" in r.text
 
-    portal = client.get("/d/PRC-0001")
+    portal = client.get("/d/PRC-0002")
     assert portal.status_code == 200 and "Read version 1.0" in portal.text
-    pdf = client.get("/d/PRC-0001/v1.0.pdf")
+    pdf = client.get("/d/PRC-0002/v1.0.pdf")
     assert pdf.status_code == 200 and pdf.content.startswith(b"%PDF")
-    assert "PRC-0001" in client.get("/search?q=access").text
+    assert "PRC-0002" in client.get("/search?q=access").text
 
     # A participant cannot act outside their role.
     r = client.post(f"{doc_url}/action/new_revision", data={"csrf": csrf_of(client.get(doc_url).text)},

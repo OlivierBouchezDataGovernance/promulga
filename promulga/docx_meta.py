@@ -141,6 +141,38 @@ def has_cover(data: bytes) -> bool:
     return any(_sdt_tag(s) == COVER_TAG for s in root.iter(f"{W}sdt"))
 
 
+def word_comments(data: bytes) -> list[dict[str, str]]:
+    """Comments written in Word or in the online editor: id, author, date, text and the commented
+    passage (replies, which Word stores as separate comments, are included like the others)."""
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(data))
+        comments = etree.fromstring(zf.read("word/comments.xml"))
+        document = etree.fromstring(zf.read("word/document.xml"))
+    except (KeyError, zipfile.BadZipFile, etree.XMLSyntaxError):
+        return []
+    # Commented passage: the text between commentRangeStart and commentRangeEnd of the same id.
+    anchors: dict[str, list[str]] = {}
+    open_ids: set[str] = set()
+    for el in document.iter(f"{W}commentRangeStart", f"{W}commentRangeEnd", f"{W}t"):
+        if el.tag == f"{W}commentRangeStart":
+            open_ids.add(el.get(f"{W}id"))
+        elif el.tag == f"{W}commentRangeEnd":
+            open_ids.discard(el.get(f"{W}id"))
+        else:
+            for cid in open_ids:
+                anchors.setdefault(cid, []).append(el.text or "")
+    out = []
+    for c in comments.iter(f"{W}comment"):
+        cid = c.get(f"{W}id") or ""
+        text = "\n".join("".join(t.text or "" for t in p.iter(f"{W}t")) for p in c.iter(f"{W}p")).strip()
+        if not text:
+            continue
+        anchor = " ".join("".join(anchors.get(cid, [])).split())
+        out.append({"id": cid, "author": c.get(f"{W}author") or "", "date": c.get(f"{W}date") or "",
+                    "text": text, "anchor": anchor[:280]})
+    return out
+
+
 def docx_paragraphs(data: bytes) -> list[str]:
     """Text of the document paragraphs, without the cover page (for comparisons)."""
     root = etree.fromstring(zipfile.ZipFile(io.BytesIO(data)).read("word/document.xml"))
@@ -321,7 +353,7 @@ def _history_table(history: list[dict[str, str]]):
     rows = [["Version", "Date", "Author", "Changes", "Approved by"]]
     rows += [[h.get("version", ""), h.get("date", ""), h.get("author", ""), h.get("note", ""),
               h.get("approved_by", "")] for h in history] or [["-", "-", "-", "Not published yet", "-"]]
-    return _table(rows, header=True, widths=[900, 1300, 1800, 3400, 1600])
+    return _table(rows, header=True, widths=[1100, 1300, 1700, 2600, 2300])
 
 
 def _approvals_table(approvals: list[dict[str, str]]):
@@ -491,6 +523,17 @@ TITLE_PAGE_KEYS = [("REF", "Reference"), ("FULL_VERSION", "Version"), ("STATUS",
                    ("PUBLISHED", "Published"), ("AUTHOR", "Owner")]
 
 
+def _title_page_spacing(title: str, description: str) -> tuple[int, int]:
+    """Space before the type line and before the copyright line, in twips (2400 each for a one-line title
+    and a description of up to three lines)."""
+    import math
+    title_lines = max(1, math.ceil(len(title) / 26))           # 30 pt bold on a 16 cm column
+    desc_lines = math.ceil(len(description) / 80) if description else 0   # 13 pt
+    extra = (title_lines - 1) * 760 + max(0, desc_lines - 3) * 330
+    top = max(400, 2400 - extra // 2)
+    return top, max(300, 2400 - (extra - (2400 - top)))
+
+
 def _rebuild_cover(body, vals: dict[str, str], labels: list[tuple[str, str]], history: list[dict[str, str]],
                    logo: tuple[bytes, str] | None = None, approvals: list[dict[str, str]] | None = None):
     """Two generated pages: the title page, then the document control page."""
@@ -510,8 +553,11 @@ def _rebuild_cover(body, vals: dict[str, str], labels: list[tuple[str, str]], hi
         content.append(_band(vals["CLASSIFICATION"], fill, ink))
     if logo:
         content.append(_logo_paragraph(*logo_size_emu(logo[0])))
+    # The blank space above and below shrinks when the title or the description take more lines,
+    # so that the title page always stays on one page (twips: 1/20 point).
+    top, bottom_space = _title_page_spacing(vals.get("TITLE", ""), vals.get("DESCRIPTION", ""))
     spacer = _p("", space_after=0)
-    spacer.find(f"{W}pPr/{W}spacing").set(f"{W}before", "2400")
+    spacer.find(f"{W}pPr/{W}spacing").set(f"{W}before", str(top))
     content.append(spacer)
     content.append(_p(vals.get("TYPE", "").upper(), bold=True, size=22, color=GOLD, space_after=160))
     content.append(_p(vals.get("TITLE", ""), bold=True, size=60, color=PRIMARY, space_after=280))
@@ -520,7 +566,7 @@ def _rebuild_cover(body, vals: dict[str, str], labels: list[tuple[str, str]], hi
     content.append(_table([[label, vals.get(key, "") or "-"] for key, label in TITLE_PAGE_KEYS],
                           header=False, widths=[2200, 6800]))
     bottom = _p("", space_after=0)
-    bottom.find(f"{W}pPr/{W}spacing").set(f"{W}before", "2400")
+    bottom.find(f"{W}pPr/{W}spacing").set(f"{W}before", str(bottom_space))
     content.append(bottom)
     if vals.get("COPYRIGHT"):
         content.append(_p(vals["COPYRIGHT"], size=18, color=PRIMARY, space_after=60))

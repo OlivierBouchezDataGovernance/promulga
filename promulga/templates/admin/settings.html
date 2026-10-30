@@ -70,6 +70,8 @@
           <div><label for="review_reminder_days">Warn the owner N days before the review is due</label>
             <input id="review_reminder_days" type="number" min="0" max="365" name="review_reminder_days" value="{{ site.review_reminder_days }}"></div>
         </div>
+        <label for="default_approvers">Default approvers of new documents, besides the owner <span class="hint">(e-mails separated by commas; empty = the administrators)</span></label>
+        <input id="default_approvers" type="text" name="default_approvers" value="{{ (site.default_approvers or []) | join(', ') }}">
         <label class="check"><input type="checkbox" name="manager_digest" value="1" {{ 'checked' if site.manager_digest }}> Daily summary of overdue stages to the Document Managers</label>
         <label class="check"><input type="checkbox" name="notify_on_publish" value="1" {{ 'checked' if site.notify_on_publish }}> E-mail all participants when a version is published</label>
       </fieldset>

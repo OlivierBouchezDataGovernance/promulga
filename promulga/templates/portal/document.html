@@ -25,6 +25,11 @@
         <a class="btn" href="/d/{{ doc.ref }}/v{{ pub.version }}.pdf" target="_blank" rel="noopener">Read version {{ pub.version }} (PDF)</a>
         <a class="btn btn-outline" href="/d/{{ doc.ref }}/v{{ pub.version }}.pdf?download=1">Download</a>
       </div>
+      {% if translations %}
+        <p class="small">Also available:
+          {% for t in translations %}<a href="/d/{{ doc.ref }}/translations/{{ t.id }}" target="_blank" rel="noopener" lang="{{ t.language }}">{{ t.language_label }}</a>{{ ', ' if not loop.last }}{% endfor %}.
+          <span class="muted">{{ translations[0].notice }}</span></p>
+      {% endif %}
       {% if doc.status != "Published" %}
         <p class="small muted">A new version is being prepared. Version {{ pub.version }} remains the one in force until the next one is published.</p>
       {% endif %}
@@ -40,6 +45,16 @@
       {% if site.portal_show_owner %}<tr><th>Owner</th><td>{{ doc.owner.display }}</td></tr>{% endif %}
       {% if pub and pub.approved_by %}<tr><th>Approved by</th><td>{{ pub.approved_by }}</td></tr>{% endif %}
     </table>
+    {% if parent or children %}
+    <h3 style="margin-top:1rem">Hierarchy</h3>
+    {% if parent %}<p class="small">Applies <a href="/d/{{ parent.ref }}">{{ parent.ref }} {{ parent.title }}</a></p>{% endif %}
+    {% if children %}<ul class="small">{% for c in children %}<li><a href="/d/{{ c.ref }}">{{ c.ref }} {{ c.title }}</a> <span class="muted">{{ c.doc_type }}</span></li>{% endfor %}</ul>{% endif %}
+    {% endif %}
+    {% if doc.references %}
+    <h3 style="margin-top:1rem">External references</h3>
+    <ul class="small">{% for r in doc.references %}<li>{% if r.url %}<a href="{{ r.url }}" target="_blank" rel="noopener">{{ r.label }}</a>{% else %}{{ r.label }}{% endif %}
+      {% if r.storage_path %} · <a href="/d/{{ doc.ref }}/references/{{ r.id }}" target="_blank" rel="noopener">{{ r.filename }}</a>{% endif %}</li>{% endfor %}</ul>
+    {% endif %}
     {% if doc.terms %}<p style="margin-top:1rem">{% for t in doc.terms %}<a class="tag" href="/browse/{{ t.taxonomy.slug }}/{{ t.id }}">{{ t.name }}</a>{% endfor %}</p>{% endif %}
     {% if not retired and doc.publications | length > 1 %}
     <h3 style="margin-top:1rem">Previous versions</h3>

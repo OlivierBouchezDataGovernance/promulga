@@ -12,6 +12,12 @@ Vocabulary
 - *Event*: one line of the audit log. Never updated nor deleted.
 - *StageLog*: when each stage started, was due and ended (for the indicators).
 - *Acknowledgment*: "I have read and understood" for one published version.
+- *Parent*: every document hangs under one parent document (Charter > Policy >
+  Standard / Guideline / Procedure ...), except the Charter at the top.
+- *Translation*: a French or Dutch copy of one published English version. It is an
+  annex: never reviewed nor approved, the English version prevails.
+- *ExternalReference*: a legal text, regulation or norm, stored once and linked to
+  the documents that rely on it. Also an annex: nothing to approve.
 """
 
 from __future__ import annotations
@@ -58,6 +64,12 @@ CLASSIFICATIONS = {
 }
 PUBLIC_CLASSIFICATIONS = ("external", "commercial")
 RESTRICTED_CLASSIFICATIONS = ("limited", "confidential")
+
+# Decision of the owner on a review comment, during Revision.
+ACCEPTED, REJECTED = "accepted", "rejected"
+
+# Languages of the translations attached to an English (master) version.
+TRANSLATION_LANGUAGES = {"fr": "Français", "nl": "Nederlands"}
 
 
 class User(Base):
@@ -110,6 +122,13 @@ document_terms = Table(
     Base.metadata,
     Column("document_id", ForeignKey("documents.id", ondelete="CASCADE"), primary_key=True),
     Column("term_id", ForeignKey("terms.id", ondelete="CASCADE"), primary_key=True),
+)
+
+document_references = Table(
+    "document_references",
+    Base.metadata,
+    Column("document_id", ForeignKey("documents.id", ondelete="CASCADE"), primary_key=True),
+    Column("reference_id", ForeignKey("external_references.id", ondelete="CASCADE"), primary_key=True),
 )
 
 
@@ -172,9 +191,18 @@ class Document(Base):
     readers: Mapped[str] = mapped_column(Text, default="")                 # mandatory readers' e-mails; '' = everybody
     checked_out_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     checked_out_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    parent_id: Mapped[int | None] = mapped_column(ForeignKey("documents.id", ondelete="SET NULL"), nullable=True,
+                                                  index=True)
+    # The PDF the approvers approve: built from approval_revision when the document enters Approval.
+    # (a plain id, not a foreign key: revisions already point to documents)
+    approval_revision_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    approval_pdf_path: Mapped[str] = mapped_column(String(500), default="")
+    approval_pdf_sha: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
+    parent: Mapped[Document | None] = relationship(remote_side="Document.id", back_populates="children")
+    children: Mapped[list[Document]] = relationship(back_populates="parent", order_by="Document.ref")
     owner: Mapped[User] = relationship(foreign_keys=[owner_id])
     checked_out_by: Mapped[User | None] = relationship(foreign_keys=[checked_out_by_id])
     assignments: Mapped[list[Assignment]] = relationship(back_populates="document",
@@ -187,6 +215,11 @@ class Document(Base):
     comments: Mapped[list[Comment]] = relationship(back_populates="document", cascade="all, delete-orphan",
                                                    order_by="Comment.created_at")
     terms: Mapped[list[Term]] = relationship(secondary=document_terms, order_by="Term.name")
+    translations: Mapped[list[Translation]] = relationship(back_populates="document", cascade="all, delete-orphan",
+                                                           order_by="Translation.created_at.desc()")
+    references: Mapped[list[ExternalReference]] = relationship(secondary=document_references,
+                                                               back_populates="documents",
+                                                               order_by="ExternalReference.title")
 
     def people(self, role: str) -> list[Assignment]:
         return [a for a in self.assignments if a.role == role]
@@ -234,6 +267,21 @@ class Document(Base):
         """The {ID} tag: at least 4 digits (0001), more when needed (10000)."""
         return f"{self.number:04d}" if self.number else ""
 
+    @property
+    def ancestors(self) -> list[Document]:
+        """Parent, grand-parent ... up to the top (the Charter), nearest first."""
+        out, seen, node = [], {self.id}, self.parent
+        while node is not None and node.id not in seen:
+            out.append(node)
+            seen.add(node.id)
+            node = node.parent
+        return out
+
+    def translation(self, language: str, version: str | None = None) -> Translation | None:
+        """The latest translation in `language` of `version` (default: the version in force)."""
+        version = version or self.current_version
+        return next((t for t in self.translations if t.language == language and t.version == version), None)
+
 
 class Assignment(Base):
     __tablename__ = "assignments"
@@ -272,7 +320,12 @@ class Revision(Base):
 
 
 class Comment(Base):
-    """A review remark or a reply, attached to the revision that was current."""
+    """A review remark or a reply, attached to the revision that was current.
+
+    Remarks come from Promulga itself (source 'promulga') or are imported from the
+    Word file when the review ends (source 'word': comments written in Word or in
+    the online editor; the author is then a name, not an account). During Revision
+    the owner records a decision on every remark of the other participants."""
 
     __tablename__ = "comments"
 
@@ -280,18 +333,31 @@ class Comment(Base):
     document_id: Mapped[int] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), index=True)
     revision_id: Mapped[int | None] = mapped_column(ForeignKey("revisions.id", ondelete="SET NULL"), nullable=True)
     parent_id: Mapped[int | None] = mapped_column(ForeignKey("comments.id", ondelete="CASCADE"), nullable=True)
-    author_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    author_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    author_label: Mapped[str] = mapped_column(String(200), default="")     # name, for imported remarks
+    source: Mapped[str] = mapped_column(String(20), default="promulga")    # promulga | word
+    location: Mapped[str] = mapped_column(String(300), default="")         # e.g. the commented text in Word
+    external_id: Mapped[str] = mapped_column(String(100), default="")      # id in the source, to import once
     body: Mapped[str] = mapped_column(Text)
     stage: Mapped[str] = mapped_column(String(20))
     version: Mapped[str] = mapped_column(String(20), default="")
     resolved: Mapped[bool] = mapped_column(Boolean, default=False)
+    decision: Mapped[str] = mapped_column(String(20), default="")          # '' | accepted | rejected
+    decision_note: Mapped[str] = mapped_column(Text, default="")
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    decided_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     attachment_name: Mapped[str] = mapped_column(String(255), default="")   # e.g. an annotated copy
     attachment_path: Mapped[str] = mapped_column(String(500), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     document: Mapped[Document] = relationship(back_populates="comments")
-    author: Mapped[User] = relationship()
+    author: Mapped[User | None] = relationship(foreign_keys=[author_id])
+    decided_by: Mapped[User | None] = relationship(foreign_keys=[decided_by_id])
     revision: Mapped[Revision | None] = relationship()
+
+    @property
+    def author_name(self) -> str:
+        return self.author.display if self.author else (self.author_label or "Unknown")
 
 
 class Publication(Base):
@@ -315,6 +381,63 @@ class Publication(Base):
     signed: Mapped[bool] = mapped_column(Boolean, default=False)  # PAdES signature applied
 
     document: Mapped[Document] = relationship(back_populates="publications")
+
+
+class Translation(Base):
+    """A French or Dutch copy of one published English version (annex: not reviewed, not approved)."""
+
+    __tablename__ = "translations"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    document_id: Mapped[int] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), index=True)
+    language: Mapped[str] = mapped_column(String(5))                       # key of TRANSLATION_LANGUAGES
+    version: Mapped[str] = mapped_column(String(20))                       # the English version translated
+    method: Mapped[str] = mapped_column(String(20), default="machine")     # machine | human
+    filename: Mapped[str] = mapped_column(String(255))
+    storage_path: Mapped[str] = mapped_column(String(500))
+    content_type: Mapped[str] = mapped_column(String(150))
+    sha256: Mapped[str] = mapped_column(String(64))
+    size: Mapped[int] = mapped_column(Integer)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    document: Mapped[Document] = relationship(back_populates="translations")
+    created_by: Mapped[User | None] = relationship()
+
+    @property
+    def language_label(self) -> str:
+        return TRANSLATION_LANGUAGES.get(self.language, self.language)
+
+    @property
+    def is_current(self) -> bool:
+        return self.version == self.document.current_version
+
+    @property
+    def notice(self) -> str:
+        kind = "Machine translation" if self.method == "machine" else "Translation"
+        return f"{kind} of version {self.version}; the English version prevails."
+
+
+class ExternalReference(Base):
+    """A legal text, regulation, norm or contract a document relies on (annex: nothing to approve)."""
+
+    __tablename__ = "external_references"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(String(300))
+    issuer: Mapped[str] = mapped_column(String(200), default="")           # e.g. European Union, ISO
+    edition: Mapped[str] = mapped_column(String(100), default="")          # official version or date
+    url: Mapped[str] = mapped_column(String(1000), default="")
+    filename: Mapped[str] = mapped_column(String(255), default="")
+    storage_path: Mapped[str] = mapped_column(String(500), default="")
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    documents: Mapped[list[Document]] = relationship(secondary=document_references, back_populates="references")
+
+    @property
+    def label(self) -> str:
+        return " - ".join(p for p in [self.issuer, self.title, self.edition] if p)
 
 
 class Event(Base):
