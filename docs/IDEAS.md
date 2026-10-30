@@ -103,6 +103,15 @@ operationalises the rule.
 Documented upgrade path between versions, restore drill, monitoring of the
 outbox and of webhook deliveries.
 
+**Helm chart for Kubernetes.** Docker Compose stays the default (one small VM,
+"ready in 15 minutes"), but large organisations often require applications to
+run on their existing Kubernetes cluster. A Helm chart would deploy the app,
+Gotenberg and the optional OnlyOffice editor, with secrets as Kubernetes
+Secrets, the data volume as a PersistentVolumeClaim, an Ingress instead of
+Caddy, and liveness/readiness probes on `/healthz`. Constraint to keep in mind:
+the in-process scheduler must run once, so the app stays at one replica
+(or the scheduler moves to a separate CronJob before scaling out).
+
 ### 10. Compare page
 Highlight the open event contract (versus ConvergePoint's Zapier and SharePoint
 events), the verifiable integrity of published PDFs and the reader feedback loop.
