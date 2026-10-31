@@ -30,7 +30,7 @@
     </div>
     {% endif %}
     {% if types %}
-    <div class="eyebrow" style="margin-top:2rem">By type</div>
+    <div class="eyebrow" style="margin-top:2rem">By type <a class="small" href="/hierarchy" style="margin-left:.6rem">or follow the hierarchy, from the Charter down</a></div>
     <div class="type-tiles">
       {% for t, n in types %}<a class="type-tile" href="/search?type={{ t | urlencode }}">{{ type_icon(site, t) }} {{ t }}<span class="count">{{ n }}</span></a>{% endfor %}
     </div>

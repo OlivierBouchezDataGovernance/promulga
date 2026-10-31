@@ -264,3 +264,16 @@ iframe.mail { width: 100%; height: 520px; border: 1px solid var(--border); borde
 .picker-item { margin: .25rem 0; }
 .decision-form { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin-top: .4rem; }
 .decision-form input[type=text] { flex: 1 1 16rem; margin: 0; }
+
+/* Hierarchy tree (portal and workspace): <details> levels that open and close */
+.tree-controls { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin-bottom: .8rem; }
+.doc-tree { list-style: none; margin: 0; padding-left: 1.4rem; border-left: 1px dashed var(--border); }
+.doc-tree-root { padding-left: 0; border-left: 0; }
+.doc-tree li { margin: .15rem 0; }
+.doc-tree summary { cursor: pointer; padding: .3rem .4rem; border-radius: 6px; }
+.doc-tree summary:hover, .doc-tree .leaf:hover { background: var(--surface-alt); }
+.doc-tree .leaf { padding: .3rem .4rem .3rem 1.45rem; border-radius: 6px; }
+.doc-tree .node { display: inline-flex; flex-wrap: wrap; align-items: center; gap: .35rem; }
+.doc-tree .node-title { font-weight: 600; }
+.doc-tree .count { margin-left: .3rem; }
+.doc-tree li.current > details > summary, .doc-tree li.current > .leaf { outline: 2px solid var(--c-accent); }

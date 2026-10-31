@@ -410,6 +410,23 @@ def tree(db: Session) -> list[tuple[int, Document]]:
     return out
 
 
+def forest(docs: list[Document], type_order: list[str] | None = None) -> list[dict]:
+    """`docs` as nested nodes {"doc", "children"}: each document under its parent when the parent is in
+    `docs` too, else at the top. Children are sorted by type (in `type_order`) then by reference."""
+    ids = {d.id for d in docs}
+    order = type_order or []
+
+    def key(d: Document):
+        return (order.index(d.doc_type) if d.doc_type in order else len(order), d.ref)
+
+    def node(d: Document, seen: set[int]) -> dict:
+        kids = sorted((c for c in d.children if c.id in ids and c.id not in seen), key=key)
+        return {"doc": d, "children": [node(c, seen | {c.id}) for c in kids]}
+
+    roots = sorted((d for d in docs if d.parent_id is None or d.parent_id not in ids), key=key)
+    return [node(d, {d.id}) for d in roots]
+
+
 SUMMARY_MAX = 300   # one sentence (Writing Guideline): it must fit on the title page with the title
 
 

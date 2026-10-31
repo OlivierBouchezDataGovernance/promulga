@@ -187,8 +187,9 @@ def register(request: Request, status: str = "", type: str = "", q: str = "", mi
 
 @router.get("/documents/tree")
 def register_tree(request: Request, db: Session = Depends(get_db), user: User = Depends(require_contributor)):
-    rows = [(depth, d) for depth, d in workflow.tree(db) if workflow.can_see(d, user)]
-    return render(request, db, "admin/tree.html", user=user, rows=rows)
+    docs = [d for d in db.query(Document).all() if workflow.can_see(d, user)]
+    order = [t["name"] for t in site_settings.get(db, "doc_types")]
+    return render(request, db, "admin/tree.html", user=user, nodes=workflow.forest(docs, order), total=len(docs))
 
 
 @router.get("/documents.csv")

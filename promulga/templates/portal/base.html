@@ -8,6 +8,7 @@
     </a>
     <div class="nav-links">
       <a href="/">{{ _("Home") }}</a>
+      <a href="/hierarchy">{{ _("Hierarchy") }}</a>
       <a href="/search">{{ _("Search") }}</a>
       {% if user and user.role != 'viewer' %}<a href="/admin">{{ _("Workspace") }}</a>{% endif %}
       {% if user %}

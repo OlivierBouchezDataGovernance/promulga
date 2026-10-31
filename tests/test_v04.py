@@ -382,3 +382,27 @@ def test_export_scope_all_documents(db):
     assert p["parent"] == charter.ref and p["keywords"] == ["access", "encryption"]
     assert p["classification"] == "Internal publication" and p["references"][0]["edition"] == "2016/679"
     assert "Encryption at rest" in p["text"] and p["versions"][0]["file"] in files
+
+
+def test_portal_hierarchy_tree_opens_and_closes(db, client):
+    admin = _admin(db)
+    site_settings.set_many(db, {"doc_types": CHARTER_TYPES})
+    charter = _create(db, admin, "Framework", "Charter")
+    policy = _create(db, admin, "Security", "Policy", parent=charter)
+    std = _create(db, admin, "Passwords", "Standard", parent=policy)
+    draft = _create(db, admin, "Encryption", "Standard", parent=policy)   # never published: not on the portal
+    owner, app = _user(db, "owner@example.org"), _user(db, "app@example.org")
+    for d in (charter, policy, std):
+        workflow.check_in(db, owner, d, "final.pdf", make_pdf(d.title))
+        workflow.submit(db, owner, d)
+        workflow.approve(db, app, d)
+    db.commit()
+    nodes = workflow.forest([charter, policy, std], ["Charter", "Policy", "Standard"])
+    assert nodes[0]["doc"] == charter and nodes[0]["children"][0]["children"][0]["doc"] == std
+    page = client.get("/hierarchy").text
+    assert "<details" in page and "Open all" in page and "Close all" in page
+    assert page.index(charter.ref) < page.index(policy.ref) < page.index(std.ref) and draft.ref not in page
+    assert f'href="/hierarchy#{std.ref}"' in client.get(f"/d/{std.ref}").text
+    login(client, "admin@example.org", "admin-password-123")
+    tree = client.get("/admin/documents/tree").text
+    assert "<details" in tree and draft.ref in tree

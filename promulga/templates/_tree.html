@@ -1,0 +1,56 @@
+{# A tree of documents that opens and closes. `nodes` = workflow.forest(...); `href(doc)` = link of a document;
+   `extra(doc)` = what follows the title (version, status). Used by the portal and by the workspace. #}
+{% macro tree(nodes, href, extra, depth=0) %}
+<ul class="doc-tree{{ ' doc-tree-root' if depth == 0 }}">
+  {% for n in nodes %}{% set d = n.doc %}
+  <li id="{{ d.ref }}">
+    {% if n.children %}
+    <details {{ 'open' if depth < 1 }}>
+      <summary>{{ _node(d, href, extra) }} <span class="count" title="Documents directly underneath">{{ n.children | length }}</span></summary>
+      {{ tree(n.children, href, extra, depth + 1) }}
+    </details>
+    {% else %}
+    <div class="leaf">{{ _node(d, href, extra) }}</div>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% endmacro %}
+
+{% macro _node(d, href, extra) %}<span class="node">{{ type_icon(site, d.doc_type, 16) }}
+  <a href="{{ href(d) }}">{{ d.ref }}</a> <span class="node-title">{{ d.title }}</span>
+  <span class="muted small">{{ d.doc_type }}</span> {{ extra(d) }}</span>{% endmacro %}
+
+{% macro controls(total) %}
+<div class="tree-controls">
+  <button class="btn btn-sm btn-outline" type="button" data-tree="open">Open all</button>
+  <button class="btn btn-sm btn-outline" type="button" data-tree="close">Close all</button>
+  <span class="muted small">{{ total }} document(s)</span>
+</div>
+{% endmacro %}
+
+{% macro script() %}
+<script>
+(function () {
+  var all = function () { return document.querySelectorAll(".doc-tree details"); };
+  document.querySelectorAll("[data-tree]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var open = b.getAttribute("data-tree") === "open";
+      all().forEach(function (d) { d.open = open; });
+    });
+  });
+  // /hierarchy#DG-STD-0011: open the path down to that document and show it
+  function reveal() {
+    var id = decodeURIComponent(location.hash.slice(1));
+    var el = id && document.getElementById(id);
+    if (!el) return;
+    for (var p = el.parentElement; p; p = p.parentElement) { if (p.tagName === "DETAILS") p.open = true; }
+    document.querySelectorAll(".doc-tree li.current").forEach(function (x) { x.classList.remove("current"); });
+    el.classList.add("current");
+    el.scrollIntoView({block: "center"});
+  }
+  window.addEventListener("hashchange", reveal);
+  reveal();
+})();
+</script>
+{% endmacro %}

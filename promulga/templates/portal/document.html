@@ -3,7 +3,8 @@
 {% block title %}{{ doc.ref }} {{ pub.title if pub else doc.title }} - {{ site.site_name }}{% endblock %}
 {% block content %}
 <div class="page-head"><div class="container">
-  <div class="crumbs"><a href="/">Home</a> / <a href="/search?type={{ doc.doc_type | urlencode }}">{{ doc.doc_type }}</a></div>
+  <div class="crumbs"><a href="/">Home</a> / <a href="/search?type={{ doc.doc_type | urlencode }}">{{ doc.doc_type }}</a>
+    · <a href="/hierarchy#{{ doc.ref }}">see it in the hierarchy</a></div>
   <div class="eyebrow">{{ type_icon(site, doc.doc_type, 16) }} {{ doc.ref }} - {{ doc.doc_type }}</div>
   <h1>{{ pub.title if pub else doc.title }}</h1>
 </div></div>

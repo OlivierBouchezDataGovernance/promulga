@@ -1,0 +1,22 @@
+{% extends "portal/base.html" %}
+{% from "_tree.html" import tree, controls, script with context %}
+{% block title %}Hierarchy - {{ site.site_name }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="container">
+  <div class="crumbs"><a href="/">Home</a> / hierarchy</div>
+  <h1>Hierarchy of the documents</h1>
+  <p class="muted">From the Charter down: each Policy, then the Standards, Guidelines and Procedures that apply it.
+    Open or close a level with the arrow.</p>
+</div></div>
+<section class="section"><div class="container">
+  <div class="card">
+  {% if nodes %}
+    {{ controls(total) }}
+    {% macro href(d) %}/d/{{ d.ref }}{% endmacro %}
+    {% macro extra(d) %}<span class="muted small">v{{ d.current_version }}</span>{% endmacro %}
+    {{ tree(nodes, href, extra) }}
+  {% else %}<p class="empty">Nothing is published yet.</p>{% endif %}
+  </div>
+</div></section>
+{% endblock %}
+{% block scripts %}{{ script() }}{% endblock %}

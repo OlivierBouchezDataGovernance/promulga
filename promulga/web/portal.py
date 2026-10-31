@@ -146,6 +146,15 @@ def browse_term(slug: str, term_id: int, request: Request, db: Session = Depends
                   counts=_count_by_term(docs, children, [t.id for t in sub]), documents=in_scope, untagged=[])
 
 
+@router.get("/hierarchy")
+def hierarchy(request: Request, db: Session = Depends(get_db), user: User | None = Depends(portal_user)):
+    """Charter > Policy > Standard, Guideline, Procedure ... as a tree that opens and closes."""
+    docs = visible_documents(db, user)
+    order = [t["name"] for t in site_settings.get(db, "doc_types")]
+    return render(request, db, "portal/hierarchy.html", user=user, nodes=workflow.forest(docs, order),
+                  total=len(docs))
+
+
 @router.get("/search")
 def search(request: Request, q: str = "", type: str = "", db: Session = Depends(get_db),
            user: User | None = Depends(portal_user)):

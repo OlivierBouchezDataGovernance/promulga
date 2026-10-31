@@ -56,6 +56,14 @@ Two web sites in one small application:
 - **E-mails** to the person who must act, with links; without an SMTP server
   everything is readable in the *Outbox* (handy for demos).
 
+New in 0.4.2:
+
+- **Hierarchy you can follow.** A Hierarchy page on the portal shows the
+  documents as a tree, Charter > Policy > Standard, Guideline, Procedure, where
+  each level opens and closes (Open all / Close all). Each document page links
+  to its place in the tree. The workspace hierarchy uses the same tree, with
+  the stage of every document.
+
 New in 0.4.1:
 
 - **Audit - Confidential classification.** Only the audience of the document
