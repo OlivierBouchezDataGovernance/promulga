@@ -26,10 +26,12 @@ log = logging.getLogger(__name__)
 # Indicators
 # ---------------------------------------------------------------------------
 
-def kpis(db: Session, months: int = 12) -> dict:
-    """Workflow indicators over the last `months` months."""
+def kpis(db: Session, months: int = 12, viewer: User | None = None) -> dict:
+    """Workflow indicators over the last `months` months. The Audit documents outside the audience of
+    `viewer` count in the figures but are never named."""
     since = utcnow() - timedelta(days=30 * months)
     docs = db.query(Document).all()
+    named = [d for d in docs if not d.is_strict or (viewer is not None and d.in_audience(viewer))]
     by_status = {s: sum(1 for d in docs if d.status == s) for s in STATUSES}
     stages = db.query(StageLog).filter(StageLog.started_at >= since).all()
 
@@ -60,7 +62,7 @@ def kpis(db: Session, months: int = 12) -> dict:
             late_by_owner[d.owner.display] += 1
 
     ack = []
-    for d in docs:
+    for d in named:
         if d.ack_required and d.latest_publication and d.status == PUBLISHED:
             audience = db.query(User).filter(User.active.is_(True)).count()
             done = db.query(Acknowledgment).filter_by(publication_id=d.latest_publication.id).count()
@@ -69,8 +71,8 @@ def kpis(db: Session, months: int = 12) -> dict:
 
     return {
         "months": months, "total": len(docs), "by_status": by_status, "per_stage": per_stage,
-        "overdue": [d for d in docs if d.is_overdue],
-        "reviews_due": sorted([d for d in docs if d.status == PUBLISHED and d.next_review
+        "overdue": [d for d in named if d.is_overdue],
+        "reviews_due": sorted([d for d in named if d.status == PUBLISHED and d.next_review
                                and d.next_review <= date.today() + timedelta(days=30)], key=lambda d: d.next_review),
         "published_period": len(cycles),
         "avg_cycle_days": round(sum(cycles) / len(cycles)) if cycles else None,

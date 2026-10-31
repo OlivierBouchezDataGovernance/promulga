@@ -131,7 +131,8 @@ def _parent_options(db: Session, doc: Document | None = None) -> dict:
     if doc is not None:
         return {"parents": workflow.parent_candidates(db, site, doc.doc_type, doc),
                 "parent_rules": {doc.doc_type: workflow.parent_types(site, doc.doc_type)}}
-    parents = db.query(Document).filter(Document.status != "Retired").order_by(Document.ref).all()
+    parents = [d for d in db.query(Document).filter(Document.status != "Retired").order_by(Document.ref).all()
+               if not d.is_strict]
     return {"parents": parents,
             "parent_rules": {t["name"]: workflow.parent_types(site, t["name"]) for t in site["doc_types"]}}
 
@@ -334,6 +335,7 @@ def document_page(doc_id: int, request: Request, db: Session = Depends(get_db),
                   other_references=[r for r in db.query(ExternalReference).order_by(ExternalReference.title).all()
                                     if r.id not in linked],
                   pending=workflow.pending_users(doc), sod=workflow.segregation_warnings(doc),
+                  children=[c for c in doc.children if workflow.can_see(c, user)],
                   capability=docx_meta.capability_warning(latest.filename) if latest else "",
                   editor=onlyoffice.available(latest), ack=ack,
                   comments=top, replies=replies, open_comments=sum(1 for c in top if not c.resolved))
@@ -1142,7 +1144,7 @@ def acknowledgments_csv(doc_id: int, db: Session = Depends(get_db), user: User =
 def indicators(request: Request, months: int = 12, db: Session = Depends(get_db),
                user: User = Depends(require_manager)):
     months = max(1, min(60, months))
-    return render(request, db, "admin/indicators.html", user=user, k=insights.kpis(db, months))
+    return render(request, db, "admin/indicators.html", user=user, k=insights.kpis(db, months, viewer=user))
 
 
 @router.get("/security")
@@ -1158,6 +1160,18 @@ def security(request: Request, db: Session = Depends(get_db), user: User = Depen
 def export_page(request: Request, db: Session = Depends(get_db), user: User = Depends(require_admin)):
     return render(request, db, "admin/export.html", user=user, cfg=get_config(),
                   docs=export.exported_documents(db))
+
+
+@router.post("/export/scope", dependencies=[Depends(csrf_protect)])
+def export_scope(request: Request, scope: str = Form("public"), db: Session = Depends(get_db),
+                 user: User = Depends(require_admin)):
+    scope = "all" if scope == "all" else "public"
+    site_settings.set_many(db, {"export_scope": scope})
+    workflow.log_admin(db, user, "Export scope changed", scope)
+    db.commit()
+    flash(request, "Every published document will be exported." if scope == "all"
+          else "Only the public documents will be exported.", "success")
+    return redirect("/admin/export")
 
 
 @router.get("/export/package.zip")

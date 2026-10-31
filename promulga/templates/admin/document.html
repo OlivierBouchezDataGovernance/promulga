@@ -242,7 +242,7 @@
   <div class="card">
     <h3>Hierarchy</h3>
     <p class="small"><strong>Parent:</strong> {% if doc.parent %}<a href="/admin/documents/{{ doc.parent.id }}">{{ doc.parent.ref }} {{ doc.parent.title }}</a>{% else %}<span class="muted">none</span>{% endif %}</p>
-    {% if doc.children %}<p class="small"><strong>Children:</strong>{% for c in doc.children %}<br><a href="/admin/documents/{{ c.id }}">{{ c.ref }} {{ c.title }}</a> <span class="muted">{{ c.status }}</span>{% endfor %}</p>{% endif %}
+    {% if children %}<p class="small"><strong>Children:</strong>{% for c in children %}<br><a href="/admin/documents/{{ c.id }}">{{ c.ref }} {{ c.title }}</a> <span class="muted">{{ c.status }}</span>{% endfor %}</p>{% endif %}
     <p class="small"><a href="/admin/documents/tree">See the whole tree</a>{% if user.has_role('manager') %} · <a href="/admin/documents/new?parent={{ doc.id }}">New document under this one</a>{% endif %}</p>
   </div>
   <div class="card" id="annexes">

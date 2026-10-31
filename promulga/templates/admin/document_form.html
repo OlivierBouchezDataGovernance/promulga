@@ -60,7 +60,10 @@
         <input id="keywords" type="text" name="keywords" maxlength="500" value="{{ form.keywords or '' }}"></div>
     </div>
     <p class="hint">External and commercial publications may be exported to a public web site. Limited distribution
-      and confidential documents are shown on the portal only to their participants and to Document Managers, after sign-in.</p>
+      and confidential documents are shown on the portal only to their participants and to Document Managers, after sign-in.
+      <strong>Audit - Confidential</strong>: only the audience of the document (owner, reviewers, approvers and the
+      readers below) knows it exists; Document Managers and administrators outside it do not see it, and it is never
+      exported, sent to the API or announced by webhook. Include yourself, or you lose access.</p>
 
     {% set owner_known = (form.owner or '') | lower in (users | map(attribute='email') | map('lower') | list) %}
     <label for="owner">Owner</label>
@@ -81,7 +84,7 @@
         <input id="review_months" type="number" min="0" max="120" name="review_months" value="{{ form.review_months if form.review_months is not none else '' }}"></div>
       <div><label class="check" style="margin-top:2.2rem"><input type="checkbox" name="ack_required" value="1" {{ 'checked' if form.ack_required }}> Readers must acknowledge each version</label></div>
     </div>
-    {{ picker("readers", "Mandatory readers", "(chosen by the Data Owner; none = every account)", all_users, form.readers) }}
+    {{ picker("readers", "Mandatory readers", "(chosen by the Data Owner; none = every account; for an Audit document, the audience beyond the participants)", all_users, form.readers) }}
     {% if not doc %}
     <label for="file">Initial file <span class="hint">(optional{% if site.template_asset %}; otherwise the template is used{% endif %})</span></label>
     {% if pending %}<p class="notice small">{{ icon("file-text", 16) }} The file <strong>{{ pending[1] }}</strong> you sent is kept: it is used when you save,

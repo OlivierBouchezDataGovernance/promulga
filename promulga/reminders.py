@@ -101,9 +101,14 @@ def run(db: Session, today: date | None = None) -> int:
     if site.get("manager_digest") and (overdue_docs or reviews_due):
         managers = [u for u in db.query(User).filter(User.active.is_(True)).all()
                     if ROLES.index(u.role) >= ROLES.index(ROLE_MANAGER)]
-        items = [_item(doc, "overdue", today, with_people=True) for doc in overdue_docs]
-        items += [_item(doc, "review", today, with_people=True) for doc in reviews_due]
         for manager in managers:
+            # An Audit document appears only in the digest of the managers who belong to its audience.
+            items = [_item(doc, "overdue", today, with_people=True) for doc in overdue_docs
+                     if not doc.is_strict or doc.in_audience(manager)]
+            items += [_item(doc, "review", today, with_people=True) for doc in reviews_due
+                      if not doc.is_strict or doc.in_audience(manager)]
+            if not items:
+                continue
             mailer.queue(db, manager.email, f"Overdue stages and reviews due: {len(items)}", "reminder.html", site,
                          user=manager, items=items, manager=True)
             queued += 1

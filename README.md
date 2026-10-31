@@ -56,6 +56,18 @@ Two web sites in one small application:
 - **E-mails** to the person who must act, with links; without an SMTP server
   everything is readable in the *Outbox* (handy for demos).
 
+New in 0.4.1:
+
+- **Audit - Confidential classification.** Only the audience of the document
+  (owner, reviewers, approvers and named readers) knows it exists: Document
+  Managers and administrators outside it do not see it in the register, the
+  tree, the portal or the indicators, and it is never exported, returned by the
+  API or announced by webhook. Whoever sets it up must stay in the audience; an
+  Audit document cannot be the parent of another document.
+- **Export of every published document** (Settings > Export, scope "all"), with
+  a richer catalogue: parent, classification, keywords, references,
+  translations and the text of each document for full-text search.
+
 New in 0.4:
 
 - **Document hierarchy.** Every document hangs under a parent: Charter >

@@ -1,5 +1,9 @@
 """Public export: a static package of the documents tagged EXPORT_TAG (default "public").
 
+Scope (Settings > export): "public" (default) = the documents tagged EXPORT_TAG whose classification is an
+external or commercial publication; "all" = every published document, whatever its tags and classification,
+for a demonstration or an intranet site. Drafts never leave the server in either case.
+
 The package is a folder that any web server can serve as it is:
 
     index.html          searchable list, in the site's colours
@@ -42,10 +46,16 @@ class ExportError(RuntimeError):
     pass
 
 
+TEXT_MAX = 60_000   # characters of each document's text in catalogue.json, for full-text search on the site
+
+
 def exported_documents(db: Session) -> list[Document]:
     tag = get_config().export_tag
     docs = (db.query(Document).options(selectinload(Document.terms), selectinload(Document.publications))
             .filter(Document.current_version != "", Document.status != RETIRED).order_by(Document.ref).all())
+    docs = [d for d in docs if not d.is_strict]   # Audit documents never leave the server
+    if site_settings.get(db, "export_scope") == "all":
+        return docs
     # The tag selects the documents; the classification is a second lock: only external and
     # commercial publications may leave the server, whatever their tags.
     return [d for d in docs if d.classification in PUBLIC_CLASSIFICATIONS
@@ -59,7 +69,8 @@ def build(db: Session) -> dict[str, bytes]:
     base = cfg.export_site_url
     files: dict[str, bytes] = {}
     entries = []
-    for doc in exported_documents(db):
+    exported = exported_documents(db)
+    for doc in exported:
         versions = []
         for pub in doc.publications:   # newest first
             name = naming.file_name(doc, ".pdf", site, version=pub.version, draft=False,
@@ -76,6 +87,14 @@ def build(db: Session) -> dict[str, bytes]:
             "next_review": doc.next_review.isoformat() if doc.next_review else "",
             "owner": doc.owner.display if site.get("portal_show_owner") else "",
             "tags": [{"taxonomy": t.taxonomy.name, "name": t.name, "code": t.code} for t in doc.terms],
+            "parent": doc.parent.ref if doc.parent and doc.parent in exported else "",
+            "classification": doc.classification_label, "classification_code": doc.classification,
+            "keywords": [k.strip() for k in (doc.keywords or "").split(",") if k.strip()],
+            "references": [{"title": r.title, "issuer": r.issuer, "edition": r.edition, "url": r.url, "label": r.label}
+                           for r in doc.references],
+            "translations": [{"language": t.language, "version": t.version, "notice": t.notice}
+                             for t in doc.translations if t.is_current],
+            "text": (doc.latest_publication.text or "")[:TEXT_MAX],
             "versions": versions,
         })
     generated = datetime.now(timezone.utc).replace(microsecond=0).isoformat()

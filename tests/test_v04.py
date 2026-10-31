@@ -353,3 +353,32 @@ def test_description_fits_on_the_title_page(db):
         workflow.create_document(db, admin, title="Long", doc_type="Policy", summary="x" * 301,
                                  owner_email="o@example.org", reviewer_emails=[], approver_emails=["p@example.org"],
                                  term_ids=[], file=None)
+
+
+def test_export_scope_all_documents(db):
+    import json
+    from promulga import export
+    admin = _admin(db)
+    site_settings.set_many(db, {"doc_types": CHARTER_TYPES})
+    charter = _create(db, admin, "Framework", "Charter")
+    o, a = _user(db, "owner@example.org"), _user(db, "app@example.org")
+    for d in [charter]:
+        workflow.check_in(db, o, d, "c.pdf", make_pdf("Charter text"))
+        workflow.submit(db, o, d)
+        workflow.approve(db, a, d)
+    pol = _create(db, admin, "Security", "Policy", parent=charter)
+    pol.keywords = "access, encryption"
+    workflow.check_in(db, o, pol, "p.pdf", make_pdf("Encryption at rest"))
+    workflow.submit(db, o, pol)
+    workflow.approve(db, a, pol)
+    workflow.add_reference(db, admin, pol, title="GDPR", issuer="EU", edition="2016/679", url="https://eur-lex.europa.eu")
+    assert export.exported_documents(db) == []                 # internal, untagged: not public
+    site_settings.set_many(db, {"export_scope": "all"})
+    files = export.build(db)
+    cat = json.loads(files["catalogue.json"])
+    docs = {d["ref"]: d for d in cat["documents"]}
+    assert set(docs) == {charter.ref, pol.ref}
+    p = docs[pol.ref]
+    assert p["parent"] == charter.ref and p["keywords"] == ["access", "encryption"]
+    assert p["classification"] == "Internal publication" and p["references"][0]["edition"] == "2016/679"
+    assert "Encryption at rest" in p["text"] and p["versions"][0]["file"] in files

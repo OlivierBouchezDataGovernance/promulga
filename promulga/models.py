@@ -55,15 +55,19 @@ REVIEWER, APPROVER = "reviewer", "approver"
 #   external / commercial: anyone who can open the portal; may be exported to a public web site
 #   internal:             anyone who can open the portal (restrict the portal if it faces the internet)
 #   limited / confidential: signed-in participants of the document and Document Managers only
+#   audit:                the audience of the document only (owner, reviewers, approvers, named readers);
+#                         Document Managers and administrators outside that audience do not even see it exists
 CLASSIFICATIONS = {
     "external": "External publication",
     "commercial": "Commercial publication",
     "internal": "Internal publication",
     "limited": "Limited distribution",
     "confidential": "Confidential",
+    "audit": "Audit - Confidential",
 }
 PUBLIC_CLASSIFICATIONS = ("external", "commercial")
-RESTRICTED_CLASSIFICATIONS = ("limited", "confidential")
+RESTRICTED_CLASSIFICATIONS = ("limited", "confidential", "audit")
+STRICT_CLASSIFICATIONS = ("audit",)   # no role overrides the audience
 
 # Decision of the owner on a review comment, during Revision.
 ACCEPTED, REJECTED = "accepted", "rejected"
@@ -244,12 +248,31 @@ class Document(Base):
     def classification_label(self) -> str:
         return CLASSIFICATIONS.get(self.classification or "internal", CLASSIFICATIONS["internal"])
 
+    @property
+    def is_strict(self) -> bool:
+        """An Audit document: only its audience may know it exists."""
+        return (self.classification or "internal") in STRICT_CLASSIFICATIONS
+
+    @property
+    def audience_emails(self) -> list[str]:
+        """The named readers (e-mails, lower case)."""
+        return [e.strip().lower() for e in (self.readers or "").split(",") if e.strip()]
+
+    def in_audience(self, user: User | None) -> bool:
+        """Owner, reviewer, approver or named reader of the document."""
+        if user is None or not user.active:
+            return False
+        return (user.id == self.owner_id or any(a.user_id == user.id for a in self.assignments)
+                or user.email.lower() in self.audience_emails)
+
     def readable_by(self, user: User | None) -> bool:
         """Whether `user` (None = anonymous portal visitor) may read the published versions."""
         if (self.classification or "internal") not in RESTRICTED_CLASSIFICATIONS:
             return True
         if user is None or not user.active:
             return False
+        if self.is_strict:
+            return self.in_audience(user)
         if user.has_role(ROLE_MANAGER) or user.id == self.owner_id:
             return True
         return any(a.user_id == user.id for a in self.assignments)

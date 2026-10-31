@@ -3,14 +3,23 @@
 {% block content %}
 <div class="page-head"><div class="container">
   <h1>Public export</h1>
-  <p class="muted">A static package (index page, PDFs, DCAT-AP / JSON / CSV catalogues, checksums) of the published documents tagged
-    <code>{{ cfg.export_tag }}</code>, ready to be served by any web site. Drafts never leave the server.</p>
+  <p class="muted">A static package (index page, PDFs, DCAT-AP / JSON / CSV catalogues, checksums) of the published documents,
+    ready to be served by any web site. Drafts never leave the server.</p>
+  <form method="post" action="/admin/export/scope" class="card small">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <strong>What is exported</strong>
+    <label class="check"><input type="radio" name="scope" value="public" {{ 'checked' if site.export_scope != 'all' }}>
+      Public documents only: tagged <code>{{ cfg.export_tag }}</code> and classified External or Commercial publication</label>
+    <label class="check"><input type="radio" name="scope" value="all" {{ 'checked' if site.export_scope == 'all' }}>
+      Every published document, whatever its classification (demonstration, intranet site)</label>
+    <div class="actions"><button class="btn btn-sm btn-outline" type="submit">Save</button></div>
+  </form>
 </div></div>
 <section class="section"><div class="container grid-2">
   <div class="card">
     <h2>{{ docs | length }} document(s) in the package</h2>
     {% for d in docs %}<p class="small type-cell">{{ type_icon(site, d.doc_type, 16) }} <a href="/admin/documents/{{ d.id }}">{{ d.ref }}</a> {{ d.title }} - v{{ d.current_version }} ({{ d.publications | length }} version(s))</p>
-    {% else %}<p class="empty">No published document has the tag "{{ cfg.export_tag }}". Add it in Tags, then on the documents.</p>{% endfor %}
+    {% else %}<p class="empty">{% if site.export_scope == 'all' %}No published document yet.{% else %}No published document has the tag "{{ cfg.export_tag }}" and a public classification. Add the tag in Tags, then on the documents.{% endif %}</p>{% endfor %}
     <div class="actions"><a class="btn btn-outline" href="/admin/export/package.zip">Download the package (.zip)</a></div>
   </div>
   <div class="card">

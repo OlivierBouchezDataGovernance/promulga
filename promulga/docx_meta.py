@@ -53,6 +53,7 @@ CLASSIFICATION_COLORS = {
     "internal": ("475569", "FFFFFF"),      # slate: staff only
     "limited": ("B45309", "FFFFFF"),       # amber: named recipients only
     "confidential": ("B91C1C", "FFFFFF"),  # red: strictly controlled
+    "audit": ("4C1D95", "FFFFFF"),         # deep violet: audit, named audience only
 }
 # What each classification allows, printed on the cover page.
 CLASSIFICATION_NOTES = {
@@ -61,6 +62,8 @@ CLASSIFICATION_NOTES = {
     "internal": "for staff and authorised contractors only; do not share outside the organisation.",
     "limited": "for the named recipients only; do not forward.",
     "confidential": "strictly controlled; disclosure may harm the organisation. Do not copy or forward.",
+    "audit": "audit material for the named audience only; its existence is not disclosed. Do not copy, forward or "
+             "quote.",
 }
 
 

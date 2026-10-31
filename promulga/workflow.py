@@ -49,7 +49,7 @@ from .accounts import participant
 from .config import get_config
 from .models import (
     ACCEPTED, ACTIVE_STATUSES, APPROVAL, APPROVER, CLASSIFICATIONS, DRAFT, PUBLISHED, REJECTED, RETIRED, REVIEW,
-    REVIEWER, REVISION, ROLE_ADMIN, ROLE_MANAGER, TRANSLATION_LANGUAGES, Acknowledgment, Assignment, Comment, Document, Event,
+    REVIEWER, REVISION, ROLE_ADMIN, ROLE_MANAGER, STRICT_CLASSIFICATIONS, TRANSLATION_LANGUAGES, Acknowledgment, Assignment, Comment, Document, Event,
     ExternalReference, Publication, Revision, StageLog, Term, Translation, User, WebhookDelivery, utcnow,
 )
 
@@ -84,7 +84,10 @@ def is_participant(doc: Document, user: User) -> bool:
 
 def can_see(doc: Document, user: User) -> bool:
     """Access to the working area of a document (files, comments, history).
-    A Draft belongs to its owner: reviewers and approvers see it from Review on."""
+    A Draft belongs to its owner: reviewers and approvers see it from Review on.
+    An Audit document is closed to everybody outside its audience, Document Managers and deputies included."""
+    if doc.is_strict and not doc.in_audience(user):
+        return False
     if is_manager(user) or doc.owner_id == user.id:
         return True
     if doc.status == DRAFT:
@@ -243,6 +246,7 @@ def create_document(db: Session, actor: User, *, title: str, doc_type: str, summ
     _set_assignments(db, doc, reviewer_emails, approver_emails, actor, site)
     db.flush()
     db.refresh(doc)
+    _check_audience(doc, actor)
 
     template = (site.get("type_templates") or {}).get(doc_type) or site.get("template_asset")
     if file is None and template:
@@ -283,6 +287,8 @@ def update_metadata(db: Session, actor: User, doc: Document, *, title: str, summ
         doc.ack_required = ack_required
     if classification is not None:
         _require(classification in CLASSIFICATIONS, "Unknown classification.")
+        _require(classification not in STRICT_CLASSIFICATIONS or not doc.children,
+                 "This document has children: an Audit document cannot be the parent of other documents.")
         if classification != doc.classification:
             before += f", classification {doc.classification_label}"
         doc.classification = classification
@@ -290,7 +296,15 @@ def update_metadata(db: Session, actor: User, doc: Document, *, title: str, summ
         doc.keywords = _clean_keywords(keywords)
     if readers is not None:
         doc.readers = ", ".join(readers)
+    _check_audience(doc, actor)
     _log(db, doc, actor, "Metadata changed", doc.status, doc.status, f"Before: {before}")
+
+
+def _check_audience(doc: Document, actor: User) -> None:
+    """An Audit document is seen by its audience only: whoever sets it up must stay in it."""
+    _require(not doc.is_strict or doc.in_audience(actor),
+             "An Audit document is visible to its audience only (owner, reviewers, approvers, named readers): "
+             "add yourself to it, or you will lose access to the document.")
 
 
 def update_participants(db: Session, actor: User, doc: Document, *, owner_email: str,
@@ -304,6 +318,7 @@ def update_participants(db: Session, actor: User, doc: Document, *, owner_email:
     _set_assignments(db, doc, reviewer_emails, approver_emails, actor, site)
     db.flush()
     db.refresh(doc)
+    _check_audience(doc, actor)
     _log(db, doc, actor, "Participants changed", doc.status, doc.status, f"Before: {before}")
     if doc.status == REVIEW and not doc.reviewers:
         _move(db, doc, REVISION, actor, "Review skipped (no reviewers left)", site=site)
@@ -341,7 +356,7 @@ def parent_candidates(db: Session, site: dict, doc_type: str, doc: Document | No
     if allowed is not None:
         query = query.filter(Document.doc_type.in_(allowed))
     excluded = {d.id for d in descendants(doc)} | ({doc.id} if doc else set())
-    return [d for d in query.order_by(Document.ref).all() if d.id not in excluded]
+    return [d for d in query.order_by(Document.ref).all() if d.id not in excluded and not d.is_strict]
 
 
 def descendants(doc: Document | None) -> list[Document]:
@@ -368,6 +383,7 @@ def _check_parent(db: Session, site: dict, doc_type: str, parent_id: int | None,
         return None
     parent = db.get(Document, parent_id)
     _require(parent is not None and parent.status != RETIRED, "Unknown or withdrawn parent document.")
+    _require(not parent.is_strict, "An Audit document cannot be the parent of another document.")
     if allowed is not None and parent.doc_type not in allowed:
         raise WorkflowError(f"A {doc_type} hangs under a {' or '.join(allowed)}, not under a {parent.doc_type}.")
     if doc is not None:
@@ -981,7 +997,10 @@ def acknowledgment_audience(db: Session, doc: Document | None = None) -> list[Us
     emails = [e.strip().lower() for e in (doc.readers if doc is not None else "").split(",") if e.strip()]
     if emails:
         query = query.filter(User.email.in_(emails))
-    return query.order_by(User.email).all()
+    users = query.order_by(User.email).all()
+    if doc is not None and doc.is_strict:   # never everybody: the audience of the document
+        users = [u for u in users if doc.in_audience(u)]
+    return users
 
 
 def acknowledge(db: Session, user: User, doc: Document) -> None:
@@ -1033,6 +1052,8 @@ def remind_acknowledgments(db: Session, actor: User, doc: Document) -> int:
 def webhook(db: Session, site: dict, action: str, doc: Document, actor: User | None, detail: str = "") -> None:
     urls = [u for u in site.get("webhook_urls") or [] if u.startswith("https://")]
     if not urls:
+        return
+    if doc.is_strict:   # an Audit document is not announced outside its audience
         return
     who = actor.display if actor else "Promulga"
     text = f"{doc.ref} {doc.title}: {action} by {who} (stage {doc.status}). {doc_link(doc)}"

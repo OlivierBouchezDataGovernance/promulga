@@ -7,6 +7,8 @@ never exposed; published PDFs are linked through the portal.
     GET /api/v1/documents                 all documents (metadata, stage, versions)
     GET /api/v1/documents/{ref}           one document, with its publications
     GET /api/v1/taxonomies                taxonomies and tags (with codes)
+
+Documents classified "Audit - Confidential" are never listed nor returned.
 """
 
 from __future__ import annotations
@@ -69,7 +71,7 @@ def list_documents(status: str = "", type: str = "", tag: str = "", db: Session 
         q = q.filter(Document.status == status)
     if type:
         q = q.filter(Document.doc_type == type)
-    docs = q.order_by(Document.ref).all()
+    docs = [d for d in q.order_by(Document.ref).all() if not d.is_strict]   # Audit documents are not exposed
     if tag:
         docs = [d for d in docs if any(t.slug == tag.lower() or t.name.lower() == tag.lower() for t in d.terms)]
     return {"count": len(docs), "documents": [_doc(d, site) for d in docs]}

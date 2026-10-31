@@ -58,6 +58,7 @@ DEFAULTS: dict[str, Any] = {
     "review_reminder_days": 30,     # warn the owner N days before the periodic review is due
     # Integrations -------------------------------------------------------------
     "webhook_urls": [],             # https URLs receiving a JSON message at each workflow event
+    "export_scope": "public",       # public = tagged external/commercial documents; all = every published one
     "export_auto": False,           # push the public package after every publication
     # Internal bookkeeping (not shown in forms) -----------------------------
     "last_reminder_run": "",
