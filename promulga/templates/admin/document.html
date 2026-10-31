@@ -295,18 +295,31 @@
       Periodic review: every {{ doc.review_months if doc.review_months is not none else site.review_months }} month(s){{ ' (none)' if (doc.review_months if doc.review_months is not none else site.review_months) == 0 }}.
       {% if doc.ack_required %}<br>Readers must acknowledge each version.{% endif %}</p>
   </div>
-  {% if ack %}
-  <div class="card">
-    <h3>Read &amp; acknowledge</h3>
-    <p class="small">Version {{ ack.publication.version }}: <strong>{{ ack.done | length }}</strong> of {{ (ack.done | length) + (ack.missing | length) }} people ({{ ack.rate }} %).</p>
-    <div style="height:8px;background:var(--surface-alt);border-radius:4px;overflow:hidden"><div style="height:8px;width:{{ ack.rate }}%;background:var(--st-published)"></div></div>
-    {% if user.has_role('manager') %}
+  {% if dist %}
+  <div class="card" id="distribution">
+    <h3>Distribution{{ ' and reading' if doc.ack_required }}</h3>
+    <p class="small muted">{% if dist.named %}Distributed to the named readers{% else %}Distributed to every active account{% endif %}{% if doc.is_strict %}, within the audience of this Audit document{% endif %}.
+      {% if dist.planned %}Planned list: nothing is published yet{% if doc.ack_required %}, so nobody can acknowledge it yet{% endif %}.
+      {% elif not doc.ack_required %}Reading is not tracked: tick "Readers must acknowledge" in the details to know who read it.{% endif %}</p>
+    {% if dist.tracked %}
+    <p class="small">Version {{ dist.publication.version }}: <strong>{{ dist.done | length }}</strong> of {{ dist.total }} people have read it ({{ dist.rate }} %).</p>
+    <div style="height:8px;background:var(--surface-alt);border-radius:4px;overflow:hidden"><div style="height:8px;width:{{ dist.rate }}%;background:var(--st-published)"></div></div>
+    {% endif %}
+    <details {{ 'open' if dist.total <= 30 }}><summary class="small">{{ dist.total }} {{ 'person' if dist.total == 1 else 'people' }}</summary>
+    <div class="table-wrap"><table class="small">
+      <thead><tr><th>Person</th>{% if dist.tracked %}<th>Read (UTC)</th>{% endif %}</tr></thead>
+      <tbody>{% for r in dist.rows %}<tr>
+        <td>{{ r.user.name or r.user.email }}{% if r.user.name %}<br><span class="muted">{{ r.user.email }}</span>{% endif %}</td>
+        {% if dist.tracked %}<td>{% if r.ack %}<span class="done">Read</span><br><span class="muted">{{ r.ack.acknowledged_at.strftime('%Y-%m-%d %H:%M') }}</span>{% else %}<strong>Not read</strong>{% endif %}</td>{% endif %}
+      </tr>{% else %}<tr><td colspan="2" class="muted">Nobody: no active account matches the readers.</td></tr>{% endfor %}</tbody>
+    </table></div></details>
     <div class="actions">
+      {% if dist.tracked and doc.status != 'Retired' %}
       <form class="inline-form" method="post" action="/admin/documents/{{ doc.id }}/acknowledgments/remind"><input type="hidden" name="csrf" value="{{ csrf }}">
-        <button class="btn btn-sm btn-outline" type="submit" {{ 'disabled' if not ack.missing }}>Remind the {{ ack.missing | length }} missing</button></form>
+        <button class="btn btn-sm btn-outline" type="submit" {{ 'disabled' if not dist.missing }}>Remind the {{ dist.missing | length }} who have not read it</button></form>
+      {% endif %}
       <a class="small" href="/admin/documents/{{ doc.id }}/acknowledgments.csv">CSV</a>
     </div>
-    {% endif %}
   </div>
   {% endif %}
   <div class="card">

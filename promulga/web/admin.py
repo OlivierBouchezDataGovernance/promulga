@@ -327,7 +327,7 @@ def document_page(doc_id: int, request: Request, db: Session = Depends(get_db),
             replies.setdefault(c.parent_id, []).append(c)
     actions = workflow.allowed_actions(doc, user)
     latest = doc.latest_revision
-    ack = workflow.acknowledgment_status(db, doc) if doc.ack_required and doc.publications else None
+    dist = workflow.distribution(db, doc) if workflow.follows_distribution(doc, user) else None
     linked = {r.id for r in doc.references}
     return render(request, db, "admin/document.html", user=user, doc=doc, events=events, actions=actions,
                   has_task=bool(actions - {"comment", "reply", "edit", "annex"}), max_mb=get_config().max_upload_mb,
@@ -338,7 +338,7 @@ def document_page(doc_id: int, request: Request, db: Session = Depends(get_db),
                   pending=workflow.pending_users(doc), sod=workflow.segregation_warnings(doc),
                   children=[c for c in doc.children if workflow.can_see(c, user)],
                   capability=docx_meta.capability_warning(latest.filename) if latest else "",
-                  editor=onlyoffice.available(latest), ack=ack,
+                  editor=onlyoffice.available(latest), dist=dist,
                   comments=top, replies=replies, open_comments=sum(1 for c in top if not c.resolved))
 
 
@@ -1110,29 +1110,32 @@ def online_editor(doc_id: int, request: Request, db: Session = Depends(get_db),
 
 
 # ---------------------------------------------------------------------------
-# Read & acknowledge (managers)
+# Distribution and read & acknowledge (owner of the document, Document Managers)
 # ---------------------------------------------------------------------------
 
 @router.post("/documents/{doc_id}/acknowledgments/remind", dependencies=[Depends(csrf_protect)])
 def remind_acknowledgments(doc_id: int, request: Request, db: Session = Depends(get_db),
-                           user: User = Depends(require_manager)):
+                           user: User = Depends(require_contributor)):
     doc = _get_doc(db, doc_id, user)
     return _run(request, db, doc_id, lambda: workflow.remind_acknowledgments(db, user, doc),
                 "Reminder sent to the people who have not acknowledged yet.")
 
 
 @router.get("/documents/{doc_id}/acknowledgments.csv")
-def acknowledgments_csv(doc_id: int, db: Session = Depends(get_db), user: User = Depends(require_manager)):
+def acknowledgments_csv(doc_id: int, db: Session = Depends(get_db), user: User = Depends(require_contributor)):
     doc = _get_doc(db, doc_id, user)
-    status = workflow.acknowledgment_status(db, doc)
+    if not workflow.follows_distribution(doc, user):
+        raise HTTPException(403, "Only the owner of the document or a Document Manager sees its distribution list.")
+    dist = workflow.distribution(db, doc)
     out = io.StringIO()
     w = csv.writer(out)
-    w.writerow(["E-mail", "Name", "Version", "Acknowledged at (UTC)"])
-    version = status["publication"].version if status["publication"] else ""
-    for u, a in status["done"]:
-        w.writerow([u.email, u.name, version, a.acknowledged_at.strftime("%Y-%m-%d %H:%M")])
-    for u in status["missing"]:
-        w.writerow([u.email, u.name, version, ""])
+    w.writerow(["E-mail", "Name", "Version", "Read", "Acknowledged at (UTC)"])
+    version = dist["publication"].version if dist["publication"] else ""
+    for r in dist["rows"]:
+        a = r["ack"]
+        read = ("yes" if a else "no") if dist["tracked"] else "not tracked"
+        w.writerow([r["user"].email, r["user"].name, version, read,
+                    a.acknowledged_at.strftime("%Y-%m-%d %H:%M") if a else ""])
     return StreamingResponse(iter([out.getvalue()]), media_type="text/csv",
                              headers={"Content-Disposition": f"attachment; filename={doc.ref}-acknowledgments.csv"})
 

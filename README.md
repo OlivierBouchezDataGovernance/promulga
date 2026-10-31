@@ -56,6 +56,15 @@ Two web sites in one small application:
 - **E-mails** to the person who must act, with links; without an SMTP server
   everything is readable in the *Outbox* (handy for demos).
 
+New in 0.4.3:
+
+- **Distribution and reading on the document page.** The owner of a document
+  and the Document Managers see who the document is distributed to (named
+  readers, or every account) and, when reading must be acknowledged, who read
+  the version in force and when. Before the first publication the planned
+  list is shown. The owner may remind the people who have not read it and
+  download the list as CSV.
+
 New in 0.4.2:
 
 - **Hierarchy you can follow.** A Hierarchy page on the portal shows the

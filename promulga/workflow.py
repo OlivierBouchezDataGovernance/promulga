@@ -1054,8 +1054,32 @@ def _ask_acknowledgments(db: Session, doc: Document, site: dict, only: list[User
     return len(people)
 
 
+def follows_distribution(doc: Document, user: User) -> bool:
+    """Who sees, by name, the people the document is distributed to and whether they read it:
+    its owner (or the deputy of an absent owner) and the Document Managers."""
+    if not can_see(doc, user):
+        return False
+    return (is_manager(user) or doc.owner_id == user.id
+            or (doc.owner.is_absent and doc.owner.deputy_id == user.id))
+
+
+def distribution(db: Session, doc: Document) -> dict:
+    """The distribution list of `doc`: everybody in its audience, with the acknowledgment of the version in
+    force when reading is tracked. Before the first publication: the planned list, nobody has read yet.
+    rows = [{"user", "ack"}], the people who have not read first."""
+    status = acknowledgment_status(db, doc)
+    tracked = doc.ack_required and status["publication"] is not None
+    rows = [{"user": u, "ack": None} for u in status["missing"]] + [{"user": u, "ack": a} for u, a in status["done"]]
+    rows.sort(key=lambda r: (r["ack"] is not None, (r["user"].name or r["user"].email).lower()))
+    named = bool(doc.audience_emails)
+    return {**status, "rows": rows, "tracked": tracked, "named": named, "total": len(rows),
+            "planned": status["publication"] is None}
+
+
 def remind_acknowledgments(db: Session, actor: User, doc: Document) -> int:
-    _require_manager(actor)
+    _require(follows_distribution(doc, actor), f"Only the owner of {doc.ref} or a Document Manager can do this.")
+    _require(doc.ack_required and doc.latest_publication is not None and doc.status != RETIRED,
+             "This document does not ask for an acknowledgment of a published version.")
     missing = acknowledgment_status(db, doc)["missing"]
     n = _ask_acknowledgments(db, doc, site_settings.get_all(db), missing)
     _log(db, doc, actor, "Acknowledgment reminder", doc.status, doc.status, f"{n} person(s)")
