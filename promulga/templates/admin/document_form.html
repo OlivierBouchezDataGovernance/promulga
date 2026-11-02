@@ -64,7 +64,21 @@
       <div><label for="keywords">Keywords <span class="hint">(separated by commas)</span></label>
         <input id="keywords" type="text" name="keywords" maxlength="500" value="{{ form.keywords or '' }}"></div>
     </div>
-    <p class="hint">External and commercial publications may be exported to a public web site. Limited distribution
+    <div class="row">
+      <div><label for="chatbot">Chatbot use <span class="hint">(may feed a chatbot)</span></label>
+        <select id="chatbot" name="chatbot">
+          {% for key, label in distributions.items() %}<option value="{{ key }}" {{ 'selected' if (form.chatbot or 'no') == key }}>{{ label }}</option>{% endfor %}
+        </select></div>
+      <div><label for="website">Website publication <span class="hint">(may be published on a web site)</span></label>
+        <select id="website" name="website">
+          {% for key, label in distributions.items() %}<option value="{{ key }}" {{ 'selected' if (form.website or 'no') == key }}>{{ label }}</option>{% endfor %}
+        </select></div>
+    </div>
+    <p class="hint">The classification gives the sensitivity of the document; Chatbot use and Website publication say
+      where it may be deployed. <strong>Public</strong> needs an external or commercial publication,
+      <strong>Internal</strong> an internal publication at least; limited, confidential and audit documents stay at
+      <strong>No</strong>. A more restrictive classification lowers them.
+      Limited distribution
       and confidential documents are shown on the portal only to their participants and to Document Managers, after sign-in.
       <strong>Audit - Confidential</strong>: only the audience of the document (owner, reviewers, approvers and the
       readers below) knows it exists; Document Managers and administrators outside it do not see it, and it is never

@@ -80,6 +80,27 @@ PUBLIC_CLASSIFICATIONS = ("external", "commercial")
 RESTRICTED_CLASSIFICATIONS = ("limited", "confidential", "audit")
 STRICT_CLASSIFICATIONS = ("audit",)   # no role overrides the audience
 
+# Where a document may be deployed, apart from its sensitivity (the classification):
+#   chatbot: may feed a chatbot (retrieval corpus), website: may be published on a web site.
+#   no = nowhere, internal = an internal (intranet) chatbot or site, public = a public one.
+DISTRIBUTIONS = {"no": "No", "internal": "Internal", "public": "Public"}
+DISTRIBUTION_ORDER = ("no", "internal", "public")
+CHATBOT_LABEL, WEBSITE_LABEL = "Chatbot use", "Website publication"
+
+
+def max_distribution(classification: str | None) -> str:
+    """The widest chatbot / website distribution a classification allows."""
+    code = classification or "internal"
+    if code in PUBLIC_CLASSIFICATIONS:
+        return "public"
+    if code in RESTRICTED_CLASSIFICATIONS:
+        return "no"
+    return "internal"
+
+
+def allowed_distributions(classification: str | None) -> list[str]:
+    return list(DISTRIBUTION_ORDER[:DISTRIBUTION_ORDER.index(max_distribution(classification)) + 1])
+
 # Decision of the owner on a review comment, during Revision.
 ACCEPTED, REJECTED = "accepted", "rejected"
 
@@ -236,6 +257,8 @@ class Document(Base):
     next_review: Mapped[date | None] = mapped_column(Date, nullable=True)  # periodic review of the published version
     ack_required: Mapped[bool] = mapped_column(Boolean, default=False)     # readers must acknowledge
     classification: Mapped[str] = mapped_column(String(20), default="internal")  # key of CLASSIFICATIONS
+    chatbot: Mapped[str] = mapped_column(String(10), default="no")         # key of DISTRIBUTIONS
+    website: Mapped[str] = mapped_column(String(10), default="no")         # key of DISTRIBUTIONS
     keywords: Mapped[str] = mapped_column(String(500), default="")         # free keywords, comma-separated
     readers: Mapped[str] = mapped_column(Text, default="")                 # mandatory readers' e-mails; '' = everybody
     checked_out_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
@@ -292,6 +315,14 @@ class Document(Base):
     @property
     def classification_label(self) -> str:
         return CLASSIFICATIONS.get(self.classification or "internal", CLASSIFICATIONS["internal"])
+
+    @property
+    def chatbot_label(self) -> str:
+        return DISTRIBUTIONS.get(self.chatbot or "no", "No")
+
+    @property
+    def website_label(self) -> str:
+        return DISTRIBUTIONS.get(self.website or "no", "No")
 
     @property
     def is_strict(self) -> bool:

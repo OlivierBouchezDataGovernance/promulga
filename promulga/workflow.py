@@ -49,8 +49,10 @@ from . import docx_meta, mailer, naming, pdf, site_settings, storage, text
 from .accounts import participant
 from .config import get_config
 from .models import (
-    ACCEPTED, ACTIVE_STATUSES, APPROVAL, APPROVER, CLASSIFICATIONS, DRAFT, PUBLISHED, REJECTED, RETIRED, REVIEW,
-    RESTRICTED_CLASSIFICATIONS, REVIEWER, REVISION, ROLE_ADMIN, ROLE_CONTRIBUTOR, ROLE_MANAGER, STRICT_CLASSIFICATIONS, TRANSLATION_LANGUAGES, Acknowledgment, Assignment, Comment, Document, Event,
+    ACCEPTED, ACTIVE_STATUSES, APPROVAL, APPROVER, CHATBOT_LABEL, CLASSIFICATIONS, DISTRIBUTION_ORDER, DISTRIBUTIONS,
+    DRAFT, PUBLISHED, REJECTED, RETIRED, REVIEW, RESTRICTED_CLASSIFICATIONS, REVIEWER, REVISION, ROLE_ADMIN,
+    ROLE_CONTRIBUTOR, ROLE_MANAGER, STRICT_CLASSIFICATIONS, WEBSITE_LABEL, allowed_distributions, max_distribution,
+    TRANSLATION_LANGUAGES, Acknowledgment, Assignment, Comment, Document, Event,
     ExternalReference, Group, Publication, Revision, StageLog, Term, Translation, User, WebhookDelivery, utcnow,
 )
 
@@ -224,7 +226,8 @@ def create_document(db: Session, actor: User, *, title: str, doc_type: str, summ
                     file: tuple[str, bytes] | None, review_months: int | None = None,
                     ack_required: bool = False, classification: str = "internal",
                     keywords: str = "", readers: list[str] | None = None,
-                    parent_id: int | None = None, number: int | None = None, notify: bool = True) -> Document:
+                    parent_id: int | None = None, number: int | None = None, notify: bool = True,
+                    chatbot: str = "no", website: str = "no") -> Document:
     """`number` reserves a given {ID} (e.g. to import a set whose references are already written in the
     documents); by default the next free number is used.
     A document type with the Approval only profile has no reviewers; an Author (contributor) may create such a
@@ -245,6 +248,7 @@ def create_document(db: Session, actor: User, *, title: str, doc_type: str, summ
     _require(len(approver_emails) > 0, "At least one approver is required.")
     prefix = site_settings.doc_type_prefix(site, doc_type)
     _require(classification in CLASSIFICATIONS, "Unknown classification.")
+    _check_distribution(classification, chatbot, website)
     _check_summary(summary)
     parent = _check_parent(db, site, doc_type, parent_id, None)
 
@@ -258,7 +262,7 @@ def create_document(db: Session, actor: User, *, title: str, doc_type: str, summ
                    doc_type=doc_type, owner=owner, status=DRAFT, next_version="1.0",
                    change_note="Initial version", stage_due=_due(site, DRAFT), stage_started_at=utcnow(),
                    review_months=review_months, ack_required=ack_required, classification=classification,
-                   keywords=_clean_keywords(keywords), readers=", ".join(readers or []), parent=parent)
+                   chatbot=chatbot, website=website, keywords=_clean_keywords(keywords), readers=", ".join(readers or []), parent=parent)
     db.add(doc)
     doc.terms = db.query(Term).filter(Term.id.in_(term_ids or [0])).all()
     doc.ref = naming.build_ref(doc, prefix)
@@ -358,8 +362,11 @@ def _notify_batch(db: Session, actor: User, docs: list[Document], site: dict) ->
 def update_metadata(db: Session, actor: User, doc: Document, *, title: str, summary: str,
                     term_ids: list[int], review_months: int | None = None, ack_required: bool | None = None,
                     classification: str | None = None, keywords: str | None = None,
-                    readers: list[str] | None = None, parent_id: int | None | bool = False) -> None:
-    """`parent_id` False = leave the parent unchanged; None = no parent; an id = that parent."""
+                    readers: list[str] | None = None, parent_id: int | None | bool = False,
+                    chatbot: str | None = None, website: str | None = None) -> list[str]:
+    """`parent_id` False = leave the parent unchanged; None = no parent; an id = that parent.
+    Returns warnings: the chatbot / website distributions lowered because the new classification no
+    longer allows them."""
     _require_manager(actor)
     title = (title or "").strip()
     _require(bool(title), "The title is required.")
@@ -380,6 +387,23 @@ def update_metadata(db: Session, actor: User, doc: Document, *, title: str, summ
         _require(classification in CLASSIFICATIONS, "Unknown classification.")
         _require(classification not in STRICT_CLASSIFICATIONS or not doc.children,
                  "This document has children: an Audit document cannot be the parent of other documents.")
+    new_class = classification if classification is not None else doc.classification
+    lowered = []
+    wanted = {"chatbot": doc.chatbot if chatbot is None else chatbot,
+              "website": doc.website if website is None else website}
+    for field, label in (("chatbot", CHATBOT_LABEL), ("website", WEBSITE_LABEL)):
+        _require(wanted[field] in DISTRIBUTIONS, f"Unknown value for {label}.")
+        top = max_distribution(new_class)
+        if _rank(wanted[field]) > _rank(top):
+            # A more restrictive classification lowers the distribution; asking for a wider one is refused.
+            _require(new_class != doc.classification, _distribution_error(label, new_class))
+            lowered.append(f"{label} lowered from {DISTRIBUTIONS[wanted[field]]} to {DISTRIBUTIONS[top]}: "
+                           f"the classification {CLASSIFICATIONS[new_class]} does not allow more.")
+            wanted[field] = top
+        if wanted[field] != getattr(doc, field):
+            before += f", {label.lower()} {DISTRIBUTIONS.get(getattr(doc, field), getattr(doc, field))}"
+            setattr(doc, field, wanted[field])
+    if classification is not None:
         if classification != doc.classification:
             before += f", classification {doc.classification_label}"
         doc.classification = classification
@@ -388,7 +412,26 @@ def update_metadata(db: Session, actor: User, doc: Document, *, title: str, summ
     if readers is not None:
         doc.readers = ", ".join(readers)
     _check_audience(doc, actor)
-    _log(db, doc, actor, "Metadata changed", doc.status, doc.status, f"Before: {before}")
+    _log(db, doc, actor, "Metadata changed", doc.status, doc.status,
+         f"Before: {before}" + "".join(f". {w}" for w in lowered))
+    return lowered
+
+
+def _rank(distribution: str) -> int:
+    return DISTRIBUTION_ORDER.index(distribution)
+
+
+def _distribution_error(label: str, classification: str) -> str:
+    allowed = " or ".join(DISTRIBUTIONS[d] for d in allowed_distributions(classification))
+    return f"{label}: a document classified {CLASSIFICATIONS[classification]} can only be {allowed}."
+
+
+def _check_distribution(classification: str, chatbot: str, website: str) -> None:
+    """Chatbot and website distributions may not be wider than the classification allows:
+    public for external and commercial publications, internal for internal ones, none otherwise."""
+    for value, label in ((chatbot, CHATBOT_LABEL), (website, WEBSITE_LABEL)):
+        _require(value in DISTRIBUTIONS, f"Unknown value for {label}.")
+        _require(_rank(value) <= _rank(max_distribution(classification)), _distribution_error(label, classification))
 
 
 def _check_audience(doc: Document, actor: User) -> None:

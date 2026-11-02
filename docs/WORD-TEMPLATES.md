@@ -27,15 +27,16 @@ readers). The details:
 - the **logo** of the site (*Settings > Appearance*; PNG or JPEG, an SVG logo
   is not used on cover pages);
 - reference and type, title, description;
-- a table: reference, type, domain, version, status, classification, owner,
+- a table: reference, type, domain, version, status, classification, chatbot
+  use, website publication, owner,
   reviewers, approvers, created, last update, published, next review,
   keywords, link to the official version;
 - the **version history**: version, date, author, change note, approved by;
 - the **copyright line** (*Settings > Deadlines and alerts > Cover page*,
   `{YEAR}` and `{SITE}` are replaced) and what the classification allows.
 
-The classification and the keywords are set when the document is created
-or edited.
+The classification, the chatbot use, the website publication and the keywords
+are set when the document is created or edited.
 
 The cover page is one *locked content control* named "Promulga cover page":
 Word and OnlyOffice show it as a block that cannot be edited. Changes made to
@@ -58,6 +59,8 @@ Anywhere in a template or a document, write a tag between double braces:
 | `{{AUTHOR}}` / `{{REVIEWERS}}` / `{{APPROVERS}}` | participants |
 | `{{CREATED}}` / `{{UPDATED}}` / `{{PUBLISHED}}` / `{{NEXT_REVIEW}}` | dates (yyyy-mm-dd) |
 | `{{CLASSIFICATION}}` | Internal publication, Confidential... |
+| `{{CHATBOT}}` | Chatbot use: No, Internal, Public |
+| `{{WEBSITE}}` | Website publication: No, Internal, Public |
 | `{{KEYWORDS}}` | keywords of the document |
 | `{{LINK}}` | address of the official version on the portal |
 | `{{CHANGE_NOTE}}` | what the version in preparation changes |

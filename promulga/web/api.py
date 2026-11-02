@@ -4,8 +4,11 @@ Authentication: ``Authorization: Bearer <token>``, with a token created in
 Admin > API tokens (only its hash is stored). Working files and comments are
 never exposed; published PDFs are linked through the portal.
 
-    GET /api/v1/documents                 all documents (metadata, stage, versions)
+    GET /api/v1/documents                 all documents (metadata, stage, versions);
+                                          filters: status, type, tag, chatbot, website (no, internal, public)
     GET /api/v1/documents/{ref}           one document, with its publications
+    GET /api/v1/corpus?audience=public    text of the versions in force that may feed a chatbot:
+                                          audience "public" = Chatbot use Public; "internal" = Internal or Public
     GET /api/v1/taxonomies                taxonomies and tags (with codes)
 
 Documents classified "Audit - Confidential" are never listed nor returned.
@@ -21,7 +24,8 @@ from sqlalchemy.orm import Session, selectinload
 from .. import naming, site_settings
 from ..config import get_config
 from ..db import get_db
-from ..models import ApiToken, Document, Taxonomy, utcnow
+from ..models import (DISTRIBUTION_ORDER, RETIRED, ApiToken, Document, Taxonomy, allowed_distributions,
+                      utcnow)
 
 router = APIRouter(prefix="/api/v1")
 
@@ -49,7 +53,7 @@ def _doc(d: Document, site: dict, full: bool = False) -> dict:
         "owner": d.owner.email, "reviewers": [a.user.email for a in d.reviewers],
         "approvers": [a.user.email for a in d.approvers],
         "tags": [{"taxonomy": t.taxonomy.slug, "name": t.name, "code": t.code} for t in d.terms],
-        "classification": d.classification, "keywords": [k.strip() for k in d.keywords.split(",") if k.strip()],
+        "classification": d.classification, "chatbot": d.chatbot, "website": d.website, "keywords": [k.strip() for k in d.keywords.split(",") if k.strip()],
         "portal_url": f"{base}/d/{d.ref}" if d.current_version else None,
     }
     if full:
@@ -63,14 +67,18 @@ def _doc(d: Document, site: dict, full: bool = False) -> dict:
 
 
 @router.get("/documents")
-def list_documents(status: str = "", type: str = "", tag: str = "", db: Session = Depends(get_db),
-                   _client: ApiToken = Depends(api_client)):
+def list_documents(status: str = "", type: str = "", tag: str = "", chatbot: str = "", website: str = "",
+                   db: Session = Depends(get_db), _client: ApiToken = Depends(api_client)):
     site = site_settings.get_all(db)
     q = db.query(Document).options(selectinload(Document.terms), selectinload(Document.assignments))
     if status:
         q = q.filter(Document.status == status)
     if type:
         q = q.filter(Document.doc_type == type)
+    if chatbot:
+        q = q.filter(Document.chatbot == chatbot)
+    if website:
+        q = q.filter(Document.website == website)
     docs = [d for d in q.order_by(Document.ref).all() if not d.is_strict]   # Audit documents are not exposed
     if tag:
         docs = [d for d in docs if any(t.slug == tag.lower() or t.name.lower() == tag.lower() for t in d.terms)]
@@ -83,6 +91,34 @@ def get_document(ref: str, db: Session = Depends(get_db), _client: ApiToken = De
     if d is None:
         raise HTTPException(404, "Unknown document.")
     return _doc(d, site_settings.get_all(db), full=True)
+
+
+@router.get("/corpus")
+def corpus(audience: str = "public", db: Session = Depends(get_db), _client: ApiToken = Depends(api_client)):
+    """The corpus of a chatbot: the text of the version in force of every document whose Chatbot use reaches
+    `audience`, and whose classification still allows it (a second lock). Drafts are never included."""
+    if audience not in ("internal", "public"):
+        raise HTTPException(400, "audience must be internal or public.")
+    wanted = DISTRIBUTION_ORDER[DISTRIBUTION_ORDER.index(audience):]
+    base = get_config().base_url
+    docs = (db.query(Document).options(selectinload(Document.terms), selectinload(Document.publications))
+            .filter(Document.current_version != "", Document.status != RETIRED, Document.chatbot.in_(wanted))
+            .order_by(Document.ref).all())
+    docs = [d for d in docs if not d.is_strict and audience in allowed_distributions(d.classification)]
+    out = []
+    for d in docs:
+        pub = d.latest_publication
+        out.append({
+            "ref": d.ref, "title": pub.title if pub else d.title, "description": d.summary, "type": d.doc_type,
+            "version": d.current_version, "published": d.published_at.isoformat() if d.published_at else None,
+            "classification": d.classification, "chatbot": d.chatbot,
+            "tags": [{"taxonomy": t.taxonomy.slug, "name": t.name, "code": t.code} for t in d.terms],
+            "keywords": [k.strip() for k in d.keywords.split(",") if k.strip()],
+            "portal_url": f"{base}/d/{d.ref}",
+            "pdf_url": f"{base}/d/{d.ref}/v{d.current_version}.pdf",
+            "sha256": pub.sha256 if pub else None, "text": (pub.text or "") if pub else "",
+        })
+    return {"audience": audience, "count": len(out), "documents": out}
 
 
 @router.get("/taxonomies")

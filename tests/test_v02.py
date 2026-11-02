@@ -27,12 +27,12 @@ def _user(db, email):
 
 
 def _publish(db, admin, title="Data Quality Policy", owner="owner@example.org", reviewers=(), terms=(),
-             ack=False, review_months=None, classification="internal"):
+             ack=False, review_months=None, classification="internal", chatbot="no", website="no"):
     doc = workflow.create_document(db, admin, title=title, doc_type="Policy", summary="About data quality.",
                                    owner_email=owner, reviewer_emails=list(reviewers),
                                    approver_emails=["app@example.org"], term_ids=list(terms), file=None,
                                    ack_required=ack, review_months=review_months,
-                                   classification=classification)
+                                   classification=classification, chatbot=chatbot, website=website)
     o = _user(db, owner)
     workflow.check_in(db, o, doc, "final.pdf", make_pdf(f"{title} body"))
     workflow.submit(db, o, doc)
@@ -149,9 +149,9 @@ def test_export_package_and_github_push(db):
     public = Term(taxonomy=tax, name="Public", slug="public")
     db.add_all([tax, public])
     db.flush()
-    _publish(db, admin, title="Open Policy", terms=[public.id], classification="external")
-    _publish(db, admin, title="Internal Policy")
-    _publish(db, admin, title="Tagged But Internal", terms=[public.id])   # the classification wins over the tag
+    _publish(db, admin, title="Open Policy", classification="external", website="public")
+    _publish(db, admin, title="Tagged Only", terms=[public.id], classification="external")   # Website decides
+    _publish(db, admin, title="Intranet Policy", website="internal")   # not on a public site
     files = export.build(db)
     assert {"index.html", "catalogue.json", "catalogue.csv", "catalogue.jsonld", "SHA256SUMS"} <= set(files)
     catalogue = json.loads(files["catalogue.json"])
