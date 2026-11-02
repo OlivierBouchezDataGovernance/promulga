@@ -45,7 +45,7 @@
       <div><label for="keywords">Keywords <span class="hint">(separated by commas)</span></label>
         <input id="keywords" type="text" name="keywords" maxlength="500" value="{{ form.keywords or '' }}"></div>
     </div>
-    {{ term_checkboxes(taxonomies, selected_terms) }}
+    {{ term_checkboxes(taxonomies, selected_terms, can_add=user.has_role('manager')) }}
   </div>
   <div class="card">
     {{ people_list("approvers", "Approvers", "(at least one person other than you)", users | rejectattr('email', 'equalto', user.email) | list, form.approvers) }}

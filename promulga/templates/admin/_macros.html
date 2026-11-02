@@ -22,15 +22,23 @@
   {% else %}<p class="empty">{{ empty }}</p>{% endif %}
 {% endmacro %}
 
-{% macro term_checkboxes(taxonomies, selected) %}
+{# Tags as a tree (each tag under its parent). With can_add, a Document Manager may type new tags, created on save. #}
+{% macro term_checkboxes(taxonomies, selected, can_add=false) %}
   {% for tax in taxonomies %}
   <fieldset>
     <legend>{{ tax.name }}</legend>
-    {% for t in tax.terms %}
-      <label class="check" style="margin-left:{{ '1.25rem' if t.parent_id else '0' }}">
+    {% for t in tax.terms | rejectattr('parent_id') recursive %}
+      <label class="check" style="margin-left:{{ (loop.depth0 * 1.25) ~ 'rem' }}">
         <input type="checkbox" name="terms" value="{{ t.id }}" {{ 'checked' if t.id in selected }}> {{ t.name }}
       </label>
-    {% else %}<p class="empty small">No tags in this taxonomy yet.</p>{% endfor %}
+      {{ loop(tax.terms | selectattr('parent_id', 'equalto', t.id) | list) }}
+    {% endfor %}
+    {% if not tax.terms %}<p class="empty small">No tags in this taxonomy yet.</p>{% endif %}
+    {% if can_add %}
+    <label class="small" for="new_tags_{{ tax.id }}">New tags <span class="hint">(separated by commas; created when you save, then ticked)</span></label>
+    <input type="text" id="new_tags_{{ tax.id }}" name="new_tags_{{ tax.id }}" maxlength="500" placeholder="e.g. Chatbot, Onboarding">
+    <p class="small"><a href="/admin/taxonomies#tax-{{ tax.id }}">Rename, nest or delete tags</a></p>
+    {% endif %}
   </fieldset>
-  {% else %}<p class="empty small">No taxonomy yet: create some under Tags.</p>{% endfor %}
+  {% else %}<p class="empty small">No taxonomy yet: create some under <a href="/admin/taxonomies">Tags</a>.</p>{% endfor %}
 {% endmacro %}

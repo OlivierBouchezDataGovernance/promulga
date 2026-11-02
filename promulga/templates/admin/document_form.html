@@ -105,7 +105,7 @@
   <div>
     <h3>Tags</h3>
     <p class="small muted">They drive the navigation of the portal.</p>
-    {{ term_checkboxes(taxonomies, selected_terms) }}
+    {{ term_checkboxes(taxonomies, selected_terms, can_add=user.has_role('manager')) }}
   </div>
 </form>
 </div></section>

@@ -224,3 +224,30 @@ def test_approver_decides_several_documents_at_once(db):
     done, errors = workflow.decide_many(db, approver, [a, c], "reject", "Out of date")
     assert done == [c.ref] and len(errors) == 1 and a.ref in errors[0]
     assert c.status == "Draft" and a.status == "Published"
+
+
+# -- Tags typed in the document form -----------------------------------------------------------------------------
+
+def test_new_tags_typed_in_the_document_form(client):
+    from promulga import db as database
+    from promulga.models import Document, Taxonomy, Term
+    from .conftest import csrf_of, login
+    with database.session_scope() as db:
+        tax = Taxonomy(name="Tags", slug="tags")
+        db.add(tax)
+        db.flush()
+        db.add(Term(taxonomy_id=tax.id, name="Privacy", slug="privacy"))
+        db.flush()
+        tax_id = tax.id
+    login(client, "admin@example.org", "admin-password-123")
+    page = client.get("/admin/documents/new")
+    assert f'name="new_tags_{tax_id}"' in page.text and "Rename, nest or delete tags" in page.text
+    r = client.post("/admin/documents/new", data={
+        "csrf": csrf_of(page.text), "title": "Chatbot rules", "doc_type": "Policy", "owner": "admin@example.org",
+        "approvers": "app@example.org", "classification": "internal",
+        f"new_tags_{tax_id}": "Chatbot, privacy"}, follow_redirects=False)
+    assert r.status_code == 303, r.text[:300]
+    with database.session_scope() as db:
+        doc = db.query(Document).filter_by(title="Chatbot rules").one()
+        assert sorted(t.name for t in doc.terms) == ["Chatbot", "Privacy"], "an existing tag is reused, not doubled"
+        assert db.query(Term).filter_by(taxonomy_id=tax_id).count() == 2
