@@ -312,13 +312,15 @@ def upload_form(request: Request, db: Session = Depends(get_db), user: User = De
 async def upload_documents(request: Request, files: list[UploadFile] = File([]), doc_type: str = Form(""),
                            summary: str = Form(""), classification: str = Form("internal"),
                            keywords: str = Form(""), terms: list[str] = Form([]),
+                           chatbot: str = Form("no"), website: str = Form("no"),
                            approvers_pick: list[str] = Form([]), readers_pick: list[str] = Form([]),
                            db: Session = Depends(get_db), user: User = Depends(require_contributor)):
     try:
         uploads = [u for u in [await _read_upload(f) for f in files] if u is not None]
         out = workflow.upload_for_approval(
             db, user, uploads, doc_type=doc_type, approver_emails=approvers_pick, summary=summary,
-            term_ids=_int_list(terms), classification=classification, keywords=keywords, readers=readers_pick)
+            term_ids=_int_list(terms), classification=classification, keywords=keywords, readers=readers_pick,
+            chatbot=chatbot, website=website)
         db.commit()
     except (workflow.WorkflowError, accounts.AccountError, ValueError) as exc:
         db.rollback()
@@ -328,7 +330,7 @@ async def upload_documents(request: Request, files: list[UploadFile] = File([]),
                       selected_terms=set(_int_list(terms)), types=site_settings.approval_types(site),
                       max_files=workflow.UPLOAD_MAX_FILES, status_code=400,
                       form={"doc_type": doc_type, "summary": summary, "classification": classification,
-                            "keywords": keywords, "approvers": approvers_pick, "readers": readers_pick},
+                            "keywords": keywords, "chatbot": chatbot, "website": website, "approvers": approvers_pick, "readers": readers_pick},
                       messages=request.session.pop("flash", []), **_form_users(db))
     refs = ", ".join(d.ref for d, _ in out)
     flash(request, f"{len(out)} document(s) sent for approval: {refs}. The approvers received one e-mail.", "success")
@@ -1343,12 +1345,14 @@ def api_tokens(request: Request, db: Session = Depends(get_db), user: User = Dep
 
 
 @router.post("/api-tokens", dependencies=[Depends(csrf_protect)])
-def create_api_token(request: Request, name: str = Form(""), db: Session = Depends(get_db),
-                     user: User = Depends(require_admin)):
+def create_api_token(request: Request, name: str = Form(""), audience: str = Form(""),
+                     db: Session = Depends(get_db), user: User = Depends(require_admin)):
+    audience = audience if audience in ("internal", "public") else ""
     token = "prm_" + secrets.token_urlsafe(32)
-    db.add(ApiToken(name=(name.strip() or "API client")[:100], created_by_id=user.id,
+    db.add(ApiToken(name=(name.strip() or "API client")[:100], created_by_id=user.id, audience=audience,
                     token_hash=hashlib.sha256(token.encode()).hexdigest()))
-    workflow.log_admin(db, user, "API token created", name.strip())
+    workflow.log_admin(db, user, "API token created",
+                       f"{name.strip()} ({f'chatbot, {audience} audience' if audience else 'catalogue'})")
     db.commit()
     request.session["new_api_token"] = token     # shown once, on the next page
     return redirect("/admin/api-tokens")

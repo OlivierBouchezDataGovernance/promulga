@@ -88,8 +88,12 @@ New in 0.5 (in progress):
   public site, Internal or Public for an intranet site), instead of the tag
   `EXPORT_TAG`: the migration sets Website publication on the documents
   exported until now, so the site does not change.
-- **Chatbot corpus**: `GET /api/v1/corpus?audience=public` (or `internal`)
-  returns the text of the versions in force a chatbot may use (retrieval).
+- **Knowledge feed for chatbots** (`GET /api/v1/corpus`): the clean text of
+  the versions in force a chatbot may use, for one audience (public or
+  internal) set on its token, a public token never seeing an internal
+  document; with `?since=` only what changed, and the withdrawals (retired,
+  Chatbot use lowered, more restrictive classification) to delete from the
+  index. Catalogue tokens and chatbot tokens are created in Admin > API tokens.
 
 New in 0.4.3:
 

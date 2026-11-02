@@ -76,7 +76,7 @@ curl -H "Authorization: Bearer prm_..." https://docs.example.org/api/v1/document
 |---|---|
 | `GET /api/v1/documents?status=&type=&tag=&chatbot=&website=` | all documents: metadata, stage, versions, tags, chatbot use and website publication (`no`, `internal`, `public`) |
 | `GET /api/v1/documents/{ref}` | one document with its publications (PDF links, SHA-256) |
-| `GET /api/v1/corpus?audience=public` | corpus of a chatbot: text of the versions in force whose Chatbot use is Public (`audience=internal`: Internal or Public) |
+| `GET /api/v1/corpus?audience=&since=` | knowledge feed of a chatbot (chatbot token only): clean text of the versions in force whose Chatbot use reaches the audience (`public`, or `internal` = Internal or Public; default: the token's), capped by the classification. With `since` (ISO date or date and time): only what was opened or republished since, plus `withdrawals` (ref, date, reason: retired, chatbot use, classification, audit, deleted) |
 | `GET /api/v1/taxonomies` | taxonomies and tags, with their codes |
 
 Working files and comments are never exposed. This is the entry point for a

@@ -311,7 +311,8 @@ def title_from_filename(filename: str) -> str:
 def upload_for_approval(db: Session, actor: User, files: list[tuple[str, bytes]], *, doc_type: str,
                         approver_emails: list[str], summary: str = "", term_ids: list[int] | None = None,
                         classification: str = "internal", keywords: str = "", readers: list[str] | None = None,
-                        parent_id: int | None = None, titles: list[str] | None = None) -> list[tuple[Document, list[str]]]:
+                        parent_id: int | None = None, titles: list[str] | None = None,
+                        chatbot: str = "no", website: str = "no") -> list[tuple[Document, list[str]]]:
     """Direct upload (Approval only profile): one document per file, owned by `actor`, sent to approval at once.
     The approvers get one e-mail for the whole batch. Returns each document with the references of the documents
     that already hold the same file (same SHA-256), to warn about duplicates."""
@@ -330,7 +331,7 @@ def upload_for_approval(db: Session, actor: User, files: list[tuple[str, bytes]]
         doc = create_document(db, actor, title=title, doc_type=doc_type, summary=summary, owner_email=actor.email,
                               reviewer_emails=[], approver_emails=approver_emails, term_ids=term_ids or [],
                               file=(name, data), classification=classification, keywords=keywords,
-                              readers=readers, parent_id=parent_id, notify=False)
+                              readers=readers, parent_id=parent_id, notify=False, chatbot=chatbot, website=website)
         submit(db, actor, doc, notify=False)
         if same:
             _log(db, doc, actor, "Possible duplicate", doc.status, doc.status, f"Same file as {', '.join(same)}")
