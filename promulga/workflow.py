@@ -38,18 +38,19 @@ from __future__ import annotations
 import re
 from datetime import date, timedelta
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
+import hashlib
 import json
 
 from sqlalchemy import func
 
-from . import docx_meta, mailer, naming, pdf, site_settings, storage
+from . import docx_meta, mailer, naming, pdf, site_settings, storage, text
 from .accounts import participant
 from .config import get_config
 from .models import (
     ACCEPTED, ACTIVE_STATUSES, APPROVAL, APPROVER, CLASSIFICATIONS, DRAFT, PUBLISHED, REJECTED, RETIRED, REVIEW,
-    REVIEWER, REVISION, ROLE_ADMIN, ROLE_MANAGER, STRICT_CLASSIFICATIONS, TRANSLATION_LANGUAGES, Acknowledgment, Assignment, Comment, Document, Event,
+    REVIEWER, REVISION, ROLE_ADMIN, ROLE_CONTRIBUTOR, ROLE_MANAGER, STRICT_CLASSIFICATIONS, TRANSLATION_LANGUAGES, Acknowledgment, Assignment, Comment, Document, Event,
     ExternalReference, Publication, Revision, StageLog, Term, Translation, User, WebhookDelivery, utcnow,
 )
 
@@ -76,6 +77,21 @@ class WorkflowError(Exception):
 
 def is_manager(user: User) -> bool:
     return user.has_role(ROLE_MANAGER)
+
+
+def approval_only(site: dict, doc_type: str) -> bool:
+    """Whether documents of `doc_type` follow the Approval only profile (uploaded > Approval > Published)."""
+    return site_settings.doc_type_workflow(site, doc_type) == site_settings.WORKFLOW_APPROVAL
+
+
+def is_quick(doc: Document) -> bool:
+    """Whether `doc` follows the Approval only profile of its type."""
+    db = object_session(doc)
+    return db is not None and approval_only(site_settings.get_all(db), doc.doc_type)
+
+
+def workflow_label(doc: Document) -> str:
+    return site_settings.WORKFLOWS[site_settings.WORKFLOW_APPROVAL if is_quick(doc) else site_settings.WORKFLOW_FULL]
 
 
 def is_participant(doc: Document, user: User) -> bool:
@@ -153,7 +169,7 @@ def allowed_actions(doc: Document, user: User) -> set[str]:
     owner_or_manager = doc.owner_id == user.id or is_manager(user)
     if doc.status in (DRAFT, REVISION) and owner_or_manager:
         actions |= {"checkin", "submit"}
-        if not doc.checked_out_by_id:
+        if not doc.checked_out_by_id and not is_quick(doc):
             actions.add("checkout")
     if doc.checked_out_by_id and (doc.checked_out_by_id == user.id or is_manager(user)):
         actions.add("release")
@@ -208,11 +224,22 @@ def create_document(db: Session, actor: User, *, title: str, doc_type: str, summ
                     file: tuple[str, bytes] | None, review_months: int | None = None,
                     ack_required: bool = False, classification: str = "internal",
                     keywords: str = "", readers: list[str] | None = None,
-                    parent_id: int | None = None, number: int | None = None) -> Document:
+                    parent_id: int | None = None, number: int | None = None, notify: bool = True) -> Document:
     """`number` reserves a given {ID} (e.g. to import a set whose references are already written in the
-    documents); by default the next free number is used."""
-    _require_manager(actor)
+    documents); by default the next free number is used.
+    A document type with the Approval only profile has no reviewers; an Author (contributor) may create such a
+    document for themselves, with approvers that already have an account."""
     site = site_settings.get_all(db)
+    quick = approval_only(site, doc_type)
+    author = (quick and not is_manager(actor) and actor.has_role(ROLE_CONTRIBUTOR)
+              and (owner_email or "").strip().lower() == actor.email.lower())
+    _require(is_manager(actor) or author, "Only a Document Manager can do this. An author may upload documents of an "
+             "Approval only type, as their owner.")
+    _require(not (quick and reviewer_emails), f"A {doc_type} follows the Approval only workflow: it has no reviewers.")
+    if author:
+        known = {u.email.lower() for u in db.query(User).filter(User.active.is_(True)).all()}
+        unknown = [e for e in approver_emails if e.strip().lower() not in known]
+        _require(not unknown, f"Unknown approver(s): {', '.join(unknown)}. Choose people who already have an account.")
     title = (title or "").strip()
     _require(bool(title), "The title is required.")
     _require(len(approver_emails) > 0, "At least one approver is required.")
@@ -256,12 +283,76 @@ def create_document(db: Session, actor: User, *, title: str, doc_type: str, summ
     if file is None:   # no file, no template: a blank Word document with its cover page
         file = ("document.docx", docx_meta.new_template(naming.values(doc, site=site), naming.LABELS,
                                                         logo=cover_logo(site)))
-    _store_revision(db, actor, doc, file[0], file[1], "Initial file")
+    _store_revision(db, actor, doc, file[0], file[1], "Initial file", refresh=not quick)
 
-    _log(db, doc, actor, "Created", "", DRAFT)
+    _log(db, doc, actor, "Created", "", DRAFT, f"Workflow: {site_settings.WORKFLOWS[site_settings.doc_type_workflow(site, doc_type)]}")
     _open_stage(db, doc)
-    _notify_stage(db, doc, site)
+    if notify:
+        _notify_stage(db, doc, site)
     return doc
+
+
+UPLOAD_EXTENSIONS = (".docx", ".pdf", ".md", ".txt")
+UPLOAD_MAX_FILES = 20
+
+
+def title_from_filename(filename: str) -> str:
+    """'data-use_charter v2.docx' -> 'Data use charter v2'."""
+    stem = filename.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+    stem = stem[: stem.rfind(".")] if "." in stem else stem
+    words = " ".join(re.sub(r"[_\-]+", " ", stem).split())
+    return (words[:1].upper() + words[1:])[:300] if words else "Untitled"
+
+
+def upload_for_approval(db: Session, actor: User, files: list[tuple[str, bytes]], *, doc_type: str,
+                        approver_emails: list[str], summary: str = "", term_ids: list[int] | None = None,
+                        classification: str = "internal", keywords: str = "", readers: list[str] | None = None,
+                        parent_id: int | None = None, titles: list[str] | None = None) -> list[tuple[Document, list[str]]]:
+    """Direct upload (Approval only profile): one document per file, owned by `actor`, sent to approval at once.
+    The approvers get one e-mail for the whole batch. Returns each document with the references of the documents
+    that already hold the same file (same SHA-256), to warn about duplicates."""
+    site = site_settings.get_all(db)
+    _require(approval_only(site, doc_type), f"{doc_type} follows the Full workflow: create it with New document.")
+    _require(bool(files), "Choose at least one file.")
+    _require(len(files) <= UPLOAD_MAX_FILES, f"Upload {UPLOAD_MAX_FILES} files at most at a time.")
+    for name, _data in files:
+        _require(storage.extension(name) in UPLOAD_EXTENSIONS,
+                 f"{name}: only {', '.join(UPLOAD_EXTENSIONS)} files can be uploaded directly.")
+    out: list[tuple[Document, list[str]]] = []
+    for i, (name, data) in enumerate(files):
+        digest = hashlib.sha256(data).hexdigest()
+        same = sorted({r.document.ref for r in db.query(Revision).filter(Revision.sha256 == digest).all()})
+        title = (titles[i] if titles and i < len(titles) and titles[i].strip() else title_from_filename(name))
+        doc = create_document(db, actor, title=title, doc_type=doc_type, summary=summary, owner_email=actor.email,
+                              reviewer_emails=[], approver_emails=approver_emails, term_ids=term_ids or [],
+                              file=(name, data), classification=classification, keywords=keywords,
+                              readers=readers, parent_id=parent_id, notify=False)
+        submit(db, actor, doc, notify=False)
+        if same:
+            _log(db, doc, actor, "Possible duplicate", doc.status, doc.status, f"Same file as {', '.join(same)}")
+        out.append((doc, same))
+    _notify_batch(db, actor, [d for d, _ in out], site)
+    return out
+
+
+def _notify_batch(db: Session, actor: User, docs: list[Document], site: dict) -> None:
+    """One e-mail per approver for documents uploaded together."""
+    people: dict[int, User] = {}
+    for d in docs:
+        for u in pending_users(d):
+            people[u.id] = u
+    for user in people.values():
+        mine = [d for d in docs if user in pending_users(d)]
+        due = mine[0].stage_due.isoformat() if mine[0].stage_due else ""
+        targets = [user] + ([user.deputy] if user.is_absent and user.deputy else [])
+        for to in targets:
+            mailer.queue(db, to.email, f"Please approve {len(mine)} document(s) uploaded by {actor.display}",
+                         "notice.html", site, heading=f"{len(mine)} document(s) to approve",
+                         lines=[f"{actor.display} uploaded these documents and asks for your approval:"]
+                         + [f"{d.ref} - {d.title}" for d in mine]
+                         + ["Open each document, read it, then approve it, or reject it with a comment.",
+                            f"Due date: {due}."],
+                         button=("Open my tasks", f"{get_config().base_url}/admin"))
 
 
 def update_metadata(db: Session, actor: User, doc: Document, *, title: str, summary: str,
@@ -312,6 +403,8 @@ def update_participants(db: Session, actor: User, doc: Document, *, owner_email:
     _require_manager(actor)
     _require(len(approver_emails) > 0, "At least one approver is required.")
     site = site_settings.get_all(db)
+    _require(not (approval_only(site, doc.doc_type) and reviewer_emails),
+             f"A {doc.doc_type} follows the Approval only workflow: it has no reviewers.")
     before = _participants_text(doc)
     new_owner = participant(db, owner_email, actor, site)
     doc.owner_id = new_owner.id
@@ -481,7 +574,8 @@ def check_in(db: Session, actor: User, doc: Document, filename: str, data: bytes
     _require_owner_or_manager(doc, actor)
     _require(doc.checked_out_by_id in (None, actor.id),
              f"{doc.ref} is checked out by {doc.checked_out_by.display if doc.checked_out_by else 'someone'}.")
-    revision = _store_revision(db, actor, doc, filename, data, note)
+    # Approval only: the file is kept as uploaded (no cover page nor fields written into it).
+    revision = _store_revision(db, actor, doc, filename, data, note, refresh=not is_quick(doc))
     doc.checked_out_by_id = None
     doc.checked_out_at = None
     _log(db, doc, actor, f"Checked in revision {revision.number}", doc.status, doc.status, note)
@@ -715,7 +809,7 @@ def _prepare_approval(db: Session, doc: Document, actor: User, site: dict) -> No
         return
     try:
         data = storage.read_bytes(rev.storage_path)
-        if docx_meta.supports_metadata(rev.filename):
+        if docx_meta.supports_metadata(rev.filename) and not is_quick(doc):
             data = refresh_docx(db, doc, data)
         out = pdf.stamp(pdf.to_pdf(rev.filename, data),
                         f"{doc.ref} - {doc.title} - version {doc.next_version} submitted for approval "
@@ -810,8 +904,8 @@ def unlink_reference(db: Session, actor: User, doc: Document, ref: ExternalRefer
 # Transitions
 # ---------------------------------------------------------------------------
 
-def submit(db: Session, actor: User, doc: Document) -> None:
-    """Draft -> Review (or Approval without reviewers); Revision -> Approval."""
+def submit(db: Session, actor: User, doc: Document, notify: bool = True) -> None:
+    """Draft -> Review (or Approval without reviewers, or with the Approval only profile); Revision -> Approval."""
     _require_status(doc, DRAFT, REVISION)
     _require_owner_or_manager(doc, actor)
     _require(doc.latest_revision is not None, "Check in a file before submitting.")
@@ -823,14 +917,17 @@ def submit(db: Session, actor: User, doc: Document) -> None:
                  "decision (accept, or reject with a justification).")
     _require(bool(independent_approvers(doc)), "The owner is the only approver: add at least one other "
              "approver before submitting (the owner approves the document, but never alone).")
-    if doc.status == DRAFT and doc.reviewers:
-        _move(db, doc, REVIEW, actor, "Submitted for review")
-        return
     site = site_settings.get_all(db)
-    label = "Submitted for approval (no reviewers)" if doc.status == DRAFT else "Submitted for approval"
+    quick = approval_only(site, doc.doc_type)
+    if doc.status == DRAFT and doc.reviewers and not quick:
+        _move(db, doc, REVIEW, actor, "Submitted for review", site=site)
+        return
+    label = ("Submitted for approval (Approval only workflow)" if quick else
+             "Submitted for approval (no reviewers)" if doc.status == DRAFT else "Submitted for approval")
     _move(db, doc, APPROVAL, actor, label, site=site, notify=False)
     _prepare_approval(db, doc, actor, site)
-    _notify_stage(db, doc, site, action=label, actor=actor)
+    if notify:
+        _notify_stage(db, doc, site, action=label, actor=actor)
 
 
 def review_done(db: Session, actor: User, doc: Document, note: str = "") -> None:
@@ -868,7 +965,8 @@ def reject(db: Session, actor: User, doc: Document, note: str) -> None:
     mine = next((a for a in doc.approvers if a.user_id == actor.id), None) or acting_assignment(doc, actor, APPROVER)
     _require(mine is not None, f"You are not an approver of {doc.ref}.")
     _require(bool((note or "").strip()), "Please explain why you reject the document.")
-    _move(db, doc, REVISION, actor, "Rejected" + _on_behalf(mine, actor), note.strip())
+    # Approval only: no correction stage; the owner uploads a corrected file and sends it again.
+    _move(db, doc, DRAFT if is_quick(doc) else REVISION, actor, "Rejected" + _on_behalf(mine, actor), note.strip())
 
 
 def _on_behalf(assignment: Assignment, actor: User) -> str:
@@ -956,8 +1054,10 @@ def _publish(db: Session, doc: Document, actor: User, site: dict) -> Publication
     upcoming = {"version": version, "date": today.isoformat(), "author": doc.owner.display, "note": note,
                 "approved_by": approved_by}
     data = storage.read_bytes(source.storage_path)
+    quick = approval_only(site, doc.doc_type)
     try:
-        if docx_meta.supports_metadata(source.filename):
+        # Approval only: the original file stays as it is; the reading PDF gets a separate title page.
+        if docx_meta.supports_metadata(source.filename) and not quick:
             data = refresh_docx(db, doc, data, version=version, published=today, upcoming=upcoming)
             raw_pdf = pdf.to_pdf(source.filename, data)
         else:
@@ -978,7 +1078,8 @@ def _publish(db: Session, doc: Document, actor: User, site: dict) -> Publication
     path, digest = storage.save_bytes(f"{doc.id}/published", f"{doc.ref}-v{version}.pdf", final_pdf)
     publication = Publication(
         document=doc, version=version, published_at=today, pdf_path=path, sha256=digest,
-        source_revision_id=source.id, title=doc.title, text=pdf.extract_text(final_pdf),
+        source_revision_id=source.id, title=doc.title,
+        text=text.clean_text(source.filename, data) if quick else pdf.extract_text(final_pdf),
         approved_by=approved_by, change_note=note, signed=signed,
     )
     db.add(publication)
@@ -1169,7 +1270,12 @@ def _notify_stage(db: Session, doc: Document, site: dict, action: str = "", acto
                          lines=[f"{user.display} is absent until {user.absent_until.isoformat()} and named you "
                                 "as deputy. You can act on their behalf."] + lines, button=link)
 
-    if doc.status == DRAFT:
+    if doc.status == DRAFT and is_quick(doc):
+        intro = ("The document was rejected during approval and comes back to you."
+                 if action.startswith("Rejected") else f"You are the owner of this {doc.doc_type.lower()}.")
+        send(doc.owner, f"Please send {doc.ref} for approval (due {due})", [
+            intro, "Upload the final file if needed, then click Send for approval.", f"Due date: {due}."])
+    elif doc.status == DRAFT:
         send(doc.owner, f"Please draft {doc.ref} (due {due})", [
             f"You are the owner of this {doc.doc_type.lower()} (version {doc.next_version} in preparation).",
             "Download the working file (check-out), edit it, and upload it again (check-in). "

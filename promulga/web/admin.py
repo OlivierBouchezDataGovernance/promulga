@@ -265,6 +265,45 @@ async def new_document(request: Request, title: str = Form(""), doc_type: str = 
     return redirect(f"/admin/documents/{doc.id}")
 
 
+@router.get("/documents/upload")
+def upload_form(request: Request, db: Session = Depends(get_db), user: User = Depends(require_contributor)):
+    site = site_settings.get_all(db)
+    return render(request, db, "admin/upload.html", user=user, taxonomies=_taxonomies(db), selected_terms=set(),
+                  types=site_settings.approval_types(site), max_files=workflow.UPLOAD_MAX_FILES,
+                  form={"approvers": [e for e in workflow.default_approvers(db, site) if e != user.email]},
+                  **_form_users(db))
+
+
+@router.post("/documents/upload", dependencies=[Depends(csrf_protect)])
+async def upload_documents(request: Request, files: list[UploadFile] = File([]), doc_type: str = Form(""),
+                           summary: str = Form(""), classification: str = Form("internal"),
+                           keywords: str = Form(""), terms: list[str] = Form([]),
+                           approvers_pick: list[str] = Form([]), readers_pick: list[str] = Form([]),
+                           db: Session = Depends(get_db), user: User = Depends(require_contributor)):
+    try:
+        uploads = [u for u in [await _read_upload(f) for f in files] if u is not None]
+        out = workflow.upload_for_approval(
+            db, user, uploads, doc_type=doc_type, approver_emails=approvers_pick, summary=summary,
+            term_ids=_int_list(terms), classification=classification, keywords=keywords, readers=readers_pick)
+        db.commit()
+    except (workflow.WorkflowError, accounts.AccountError, ValueError) as exc:
+        db.rollback()
+        flash(request, str(exc), "error")
+        site = site_settings.get_all(db)
+        return render(request, db, "admin/upload.html", user=user, taxonomies=_taxonomies(db),
+                      selected_terms=set(_int_list(terms)), types=site_settings.approval_types(site),
+                      max_files=workflow.UPLOAD_MAX_FILES, status_code=400,
+                      form={"doc_type": doc_type, "summary": summary, "classification": classification,
+                            "keywords": keywords, "approvers": approvers_pick, "readers": readers_pick},
+                      messages=request.session.pop("flash", []), **_form_users(db))
+    refs = ", ".join(d.ref for d, _ in out)
+    flash(request, f"{len(out)} document(s) sent for approval: {refs}. The approvers received one e-mail.", "success")
+    for doc, same in out:
+        if same:
+            flash(request, f"{doc.ref}: the same file is already in {', '.join(same)}.", "warning")
+    return redirect("/admin/documents?mine=true")
+
+
 @router.get("/documents/{doc_id}/edit")
 def edit_document_form(doc_id: int, request: Request, db: Session = Depends(get_db),
                        user: User = Depends(require_manager)):
@@ -330,6 +369,7 @@ def document_page(doc_id: int, request: Request, db: Session = Depends(get_db),
     dist = workflow.distribution(db, doc) if workflow.follows_distribution(doc, user) else None
     linked = {r.id for r in doc.references}
     return render(request, db, "admin/document.html", user=user, doc=doc, events=events, actions=actions,
+                  workflow_label=workflow.workflow_label(doc),
                   has_task=bool(actions - {"comment", "reply", "edit", "annex"}), max_mb=get_config().max_upload_mb,
                   handles_file=workflow.handles_file(doc, user), remarks=workflow.remarks(doc),
                   undecided=workflow.undecided(doc), languages=TRANSLATION_LANGUAGES,
@@ -877,9 +917,14 @@ async def save_workflow(request: Request, draft_days: int = Form(28), review_day
         parts = [p.strip() for p in line.split("=")]
         if len(parts) >= 2 and parts[0] and re.fullmatch(r"[A-Z0-9]{2,8}", parts[1].upper()):
             icon = parts[2] if len(parts) > 2 and parts[2] in icons.ICONS else icons.DEFAULT_ICON
-            types.append({"name": parts[0][:50], "prefix": parts[1].upper(), "icon": icon})
+            kind = parts[3].lower() if len(parts) > 3 else ""
+            entry = {"name": parts[0][:50], "prefix": parts[1].upper(), "icon": icon}
+            if kind == site_settings.WORKFLOW_APPROVAL:
+                entry["workflow"] = site_settings.WORKFLOW_APPROVAL
+            types.append(entry)
     if not types:
-        flash(request, "Give at least one document type, one per line, as 'Name=PREFIX=icon'.", "error")
+        flash(request, "Give at least one document type, one per line, as 'Name=PREFIX=icon' "
+                       "(add '=approval' for the Approval only workflow).", "error")
         return redirect("/admin/settings#workflow")
     days = [draft_days, review_days, revision_days, approval_days]
     if any(d < 1 or d > 365 for d in days):

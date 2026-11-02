@@ -1,0 +1,54 @@
+{% extends "admin/base.html" %}
+{% from "admin/_macros.html" import term_checkboxes %}
+{% macro people_list(name, label, hint, people, chosen) %}
+  <fieldset class="picker">
+    <legend>{{ label }} <span class="hint">{{ hint }}</span></legend>
+    <div class="picker-list">
+      {% for u in people %}
+      <label class="check picker-item"><input type="checkbox" name="{{ name }}_pick" value="{{ u.email }}" {{ 'checked' if u.email in (chosen or []) }}>
+        {{ u.display }} <span class="muted small">{{ u.email }}</span></label>
+      {% endfor %}
+    </div>
+  </fieldset>
+{% endmacro %}
+{% block title %}Upload documents - {{ site.site_name }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="container">
+  <h1>Upload documents for approval</h1>
+  <p class="muted">For document types with the Approval only workflow: each file becomes one document, owned by you, and goes
+    straight to its approvers (no draft, no review). The file is published as it is, once approved.</p>
+</div></div>
+<section class="section"><div class="container">
+{% if not types %}
+  <p>No document type has the Approval only workflow. An administrator can add one in Settings &gt; Document types.</p>
+{% else %}
+<form method="post" action="/admin/documents/upload" enctype="multipart/form-data" class="grid-2">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="card">
+    <label for="files">Files <span class="hint">(.docx, .pdf, .md or .txt; {{ max_files }} at most; the title is taken from the file name)</span></label>
+    <input id="files" type="file" name="files" multiple required accept=".docx,.pdf,.md,.txt">
+    <label for="doc_type">Type</label>
+    <select id="doc_type" name="doc_type">
+      {% for t in types %}<option value="{{ t }}" {{ 'selected' if form.doc_type == t }}>{{ t }}</option>{% endfor %}
+    </select>
+    <label for="summary">Description <span class="hint">(optional, one sentence, the same for every file)</span></label>
+    <textarea id="summary" name="summary" rows="2" maxlength="300">{{ form.summary or '' }}</textarea>
+    <div class="row">
+      <div><label for="classification">Classification</label>
+        <select id="classification" name="classification">
+          {% for key, label in classifications.items() %}<option value="{{ key }}" {{ 'selected' if (form.classification or 'internal') == key }}>{{ label }}</option>{% endfor %}
+        </select></div>
+      <div><label for="keywords">Keywords <span class="hint">(separated by commas)</span></label>
+        <input id="keywords" type="text" name="keywords" maxlength="500" value="{{ form.keywords or '' }}"></div>
+    </div>
+    {{ term_checkboxes(taxonomies, selected_terms) }}
+  </div>
+  <div class="card">
+    {{ people_list("approvers", "Approvers", "(at least one person other than you)", users | rejectattr('email', 'equalto', user.email) | list, form.approvers) }}
+    {{ people_list("readers", "Named readers", "(optional: they must confirm their reading; also who may read a Limited or Confidential document)", all_users, form.readers) }}
+    <p><button type="submit" class="btn">Send for approval</button></p>
+  </div>
+</form>
+{% endif %}
+</div></section>
+{% endblock %}

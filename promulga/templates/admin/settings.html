@@ -76,9 +76,10 @@
         <label class="check"><input type="checkbox" name="notify_on_publish" value="1" {{ 'checked' if site.notify_on_publish }}> E-mail all participants when a version is published</label>
       </fieldset>
       <fieldset><legend>Document types</legend>
-        <label for="doc_types">One per line, as <code>Name=PREFIX=icon</code> <span class="hint">(the prefix builds the reference, e.g. POL-0001; the icon is optional)</span></label>
-        <textarea id="doc_types" name="doc_types" rows="8" style="font-family:monospace">{% for t in site.doc_types %}{{ t.name }}={{ t.prefix }}={{ t.icon or 'file-text' }}
+        <label for="doc_types">One per line, as <code>Name=PREFIX=icon</code> or <code>Name=PREFIX=icon=approval</code> <span class="hint">(the prefix builds the reference, e.g. POL-0001; the icon is optional)</span></label>
+        <textarea id="doc_types" name="doc_types" rows="8" style="font-family:monospace">{% for t in site.doc_types %}{{ t.name }}={{ t.prefix }}={{ t.icon or 'file-text' }}{{ '=approval' if t.workflow == 'approval' }}
 {% endfor %}</textarea>
+        <p class="hint"><strong>Workflow of a type.</strong> Full (default): draft, review, correction, approval, publication. <code>=approval</code>: Approval only: the file is uploaded, approved and published as it is, without draft nor review (for example the sources of a chatbot); authors may upload such documents themselves.</p>
         <div class="icon-grid" aria-label="Available icons">{% for name in icon_names %}<span>{{ icon(name, 16) }} {{ name }}</span>{% endfor %}</div>
         <p class="hint">Renaming a type does not change existing documents.</p>
       </fieldset>
