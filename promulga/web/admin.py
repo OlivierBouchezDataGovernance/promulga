@@ -25,9 +25,9 @@ from .. import (accounts, docx_meta, export, icons, insights, mailer, naming, on
 from ..config import get_config
 from ..db import get_db
 from ..models import (
-    ACTIVE_STATUSES, APPROVAL, REVIEW, ROLES, STATUSES, TRANSLATION_LANGUAGES, ApiToken, Assignment, Comment,
-    Document, Event, ExternalReference, OutboxMail, PasskeyCredential, Publication, Revision, Taxonomy, Term,
-    Translation, User, WebhookDelivery,
+    ACTIVE_STATUSES, APPROVAL, GROUP_LOCAL, GROUP_SSO, REVIEW, ROLES, STATUSES, TRANSLATION_LANGUAGES, ApiToken,
+    Assignment, Comment, Document, Event, ExternalReference, Group, OutboxMail, PasskeyCredential, Publication,
+    Revision, Taxonomy, Term, Translation, User, WebhookDelivery,
 )
 from ..security import check_password_strength, hash_password, verify_password
 from .deps import (
@@ -78,8 +78,8 @@ def _get_doc(db: Session, doc_id: int, user: User) -> Document:
 
 
 def _people(text: str, picks: list[str] | None) -> list[str]:
-    """E-mails of a participant field: the users checked in the list, then the addresses typed."""
-    return list(dict.fromkeys([p.strip().lower() for p in picks or [] if p.strip()] + accounts.parse_emails(text)))
+    """E-mails of a participant field: the users (and '@groups') checked in the list, then what was typed."""
+    return list(dict.fromkeys([p.strip().lower() for p in picks or [] if p.strip()] + accounts.parse_people(text)))
 
 
 def _owner(choice: str, other: str) -> str:
@@ -88,7 +88,8 @@ def _owner(choice: str, other: str) -> str:
 
 def _form_users(db: Session) -> dict:
     active = db.query(User).filter(User.active.is_(True)).order_by(User.name, User.email).all()
-    return {"users": [u for u in active if u.role != "viewer"], "all_users": active}
+    groups = [g for g in db.query(Group).order_by(Group.name).all() if g.active_members]
+    return {"users": [u for u in active if u.role != "viewer"], "all_users": active, "groups": groups}
 
 
 PENDING = "pending"   # files received with a creation form that was refused, kept for the next attempt
@@ -330,8 +331,8 @@ def edit_document_form(doc_id: int, request: Request, db: Session = Depends(get_
                        user: User = Depends(require_manager)):
     doc = _get_doc(db, doc_id, user)
     form = {"title": doc.title, "doc_type": doc.doc_type, "summary": doc.summary, "owner": doc.owner.email,
-            "reviewers": ", ".join(a.user.email for a in doc.reviewers),
-            "approvers": ", ".join(a.user.email for a in doc.approvers),
+            "reviewers": ", ".join(workflow.participant_tokens(doc, "reviewer")),
+            "approvers": ", ".join(workflow.participant_tokens(doc, "approver")),
             "review_months": "" if doc.review_months is None else doc.review_months, "ack_required": doc.ack_required,
             "classification": doc.classification, "keywords": doc.keywords, "readers": doc.readers,
             "parent_id": str(doc.parent_id or "")}
@@ -357,7 +358,8 @@ def edit_document(doc_id: int, request: Request, title: str = Form(""), summary:
                                  classification=classification, keywords=keywords,
                                  readers=_people(readers, readers_pick), parent_id=_parent_id(parent_id))
         new_people = (owner.strip().lower(), _people(reviewers, reviewers_pick), _people(approvers, approvers_pick))
-        old_people = (doc.owner.email, [a.user.email for a in doc.reviewers], [a.user.email for a in doc.approvers])
+        old_people = (doc.owner.email, workflow.participant_tokens(doc, "reviewer"),
+                      workflow.participant_tokens(doc, "approver"))
         if new_people != old_people:
             workflow.update_participants(db, user, doc, owner_email=owner, reviewer_emails=new_people[1],
                                          approver_emails=new_people[2])
@@ -773,6 +775,50 @@ def reinvite(user_id: int, request: Request, db: Session = Depends(get_db), user
 # ---------------------------------------------------------------------------
 # Taxonomies and terms (Document Managers)
 # ---------------------------------------------------------------------------
+
+@router.get("/groups")
+def groups_page(request: Request, db: Session = Depends(get_db), user: User = Depends(require_manager)):
+    groups = db.query(Group).order_by(Group.name).all()
+    users = db.query(User).filter(User.active.is_(True)).order_by(User.name, User.email).all()
+    return render(request, db, "admin/groups.html", user=user, groups=groups, all_users=users)
+
+
+@router.post("/groups", dependencies=[Depends(csrf_protect)])
+def save_group(request: Request, group_id: str = Form(""), name: str = Form(""), description: str = Form(""),
+               any_member: str = Form(""), members: list[str] = Form([]), delete: str = Form(""),
+               db: Session = Depends(get_db), user: User = Depends(require_manager)):
+    group = db.get(Group, int(group_id)) if group_id.isdigit() else None
+    name = name.strip().lstrip("@").lower()
+    if delete == "1" and group is not None:
+        if group.source == GROUP_SSO:
+            flash(request, "A group from the single sign-on is managed in the directory.", "error")
+            return redirect("/admin/groups")
+        workflow.log_admin(db, user, "Group deleted", group.token)
+        db.delete(group)
+        db.commit()
+        flash(request, f"Group @{name} deleted. Documents keep its members as participants.", "success")
+        return redirect("/admin/groups")
+    if group is None:
+        if not accounts.GROUP_NAME.fullmatch(name):
+            flash(request, "Group name: 2 to 50 lower-case letters, digits, dots, dashes or underscores.", "error")
+            return redirect("/admin/groups")
+        if db.query(Group).filter_by(name=name).first() is not None:
+            flash(request, f"The group @{name} already exists.", "error")
+            return redirect("/admin/groups")
+        group = Group(name=name, source=GROUP_LOCAL)
+        db.add(group)
+    group.description = description.strip()[:500]
+    group.any_member = any_member == "1"
+    if group.source == GROUP_LOCAL:        # SSO groups take their members from the directory
+        ids = _int_list(members)
+        group.members = db.query(User).filter(User.id.in_(ids or [0])).all()
+    db.flush()
+    workflow.log_admin(db, user, "Group saved", f"{group.token}: {len(group.members)} member(s)"
+                       + (", one member is enough" if group.any_member else ""))
+    db.commit()
+    flash(request, f"Group {group.token} saved.", "success")
+    return redirect("/admin/groups")
+
 
 @router.get("/taxonomies")
 def taxonomies_page(request: Request, db: Session = Depends(get_db), user: User = Depends(require_manager)):

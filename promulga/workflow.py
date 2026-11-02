@@ -51,7 +51,7 @@ from .config import get_config
 from .models import (
     ACCEPTED, ACTIVE_STATUSES, APPROVAL, APPROVER, CLASSIFICATIONS, DRAFT, PUBLISHED, REJECTED, RETIRED, REVIEW,
     RESTRICTED_CLASSIFICATIONS, REVIEWER, REVISION, ROLE_ADMIN, ROLE_CONTRIBUTOR, ROLE_MANAGER, STRICT_CLASSIFICATIONS, TRANSLATION_LANGUAGES, Acknowledgment, Assignment, Comment, Document, Event,
-    ExternalReference, Publication, Revision, StageLog, Term, Translation, User, WebhookDelivery, utcnow,
+    ExternalReference, Group, Publication, Revision, StageLog, Term, Translation, User, WebhookDelivery, utcnow,
 )
 
 # Allowed parent types, by type code (the prefix of the type in the site settings).
@@ -238,7 +238,7 @@ def create_document(db: Session, actor: User, *, title: str, doc_type: str, summ
     _require(not (quick and reviewer_emails), f"A {doc_type} follows the Approval only workflow: it has no reviewers.")
     if author:
         known = {u.email.lower() for u in db.query(User).filter(User.active.is_(True)).all()}
-        unknown = [e for e in approver_emails if e.strip().lower() not in known]
+        unknown = [e for e in approver_emails if not e.startswith("@") and e.strip().lower() not in known]
         _require(not unknown, f"Unknown approver(s): {', '.join(unknown)}. Choose people who already have an account.")
     title = (title or "").strip()
     _require(bool(title), "The title is required.")
@@ -529,16 +529,56 @@ def _check_summary(summary: str) -> None:
              f"on the title page ({n} now). The detail belongs in the document.")
 
 
+def find_group(db: Session, token: str) -> Group:
+    group = db.query(Group).filter_by(name=token.lstrip("@").lower()).first()
+    _require(group is not None, f"Unknown group {token}.")
+    _require(bool(group.active_members), f"The group {group.token} has no active member.")
+    return group
+
+
 def _set_assignments(db: Session, doc: Document, reviewer_emails: list[str], approver_emails: list[str],
                      actor: User, site: dict) -> None:
-    """Replaces reviewers/approvers, keeping the state of people who stay."""
+    """Replaces reviewers/approvers, keeping the state of people who stay. '@group' gives one assignment per
+    active member, marked with the group (a person named directly takes precedence)."""
     wanted = [(REVIEWER, e) for e in reviewer_emails] + [(APPROVER, e) for e in approver_emails]
+    wanted.sort(key=lambda w: w[1].startswith("@"))       # people named directly first
     keep: list[Assignment] = []
-    for role, email in wanted:
-        user = participant(db, email, actor, site)
-        existing = next((a for a in doc.assignments if a.role == role and a.user_id == user.id), None)
-        keep.append(existing or Assignment(role=role, user=user))
+    for role, token in wanted:
+        if token.startswith("@"):
+            group = find_group(db, token)
+            pairs = [(u, group) for u in group.active_members]
+        else:
+            pairs = [(participant(db, token, actor, site), None)]
+        for user, group in pairs:
+            if any(a.role == role and a.user_id == user.id for a in keep):
+                continue
+            existing = next((a for a in doc.assignments if a.role == role and a.user_id == user.id), None)
+            a = existing or Assignment(role=role, user=user)
+            a.group = group
+            keep.append(a)
     doc.assignments[:] = keep
+
+
+def participant_tokens(doc: Document, role: str) -> list[str]:
+    """The participants of a role as typed in the forms: '@group' once for its members, else e-mails."""
+    out: list[str] = []
+    for a in doc.people(role):
+        token = a.group.token if a.group is not None else a.user.email
+        if token not in out:
+            out.append(token)
+    return out
+
+
+def _close_group(db: Session, doc: Document, mine: Assignment, actor: User) -> None:
+    """'One member is enough': when a member of such a group acts, the group has acted."""
+    group = mine.group
+    if group is None or not group.any_member:
+        return
+    for a in doc.people(mine.role):
+        if a.group_id == group.id and a.acted_at is None and a is not mine:
+            a.acted_at = mine.acted_at
+    _log(db, doc, actor, f"Done for the group {group.token}", doc.status, doc.status,
+         "One member of the group is enough.")
 
 
 def _participants_text(doc: Document) -> str:
@@ -938,6 +978,7 @@ def review_done(db: Session, actor: User, doc: Document, note: str = "") -> None
     _require(mine is not None, f"You are not a reviewer of {doc.ref}.")
     mine.acted_at = utcnow()
     _log(db, doc, actor, "Review done" + _on_behalf(mine, actor), REVIEW, REVIEW, note)
+    _close_group(db, doc, mine, actor)
     _advance_if_complete(db, doc, actor)
 
 
@@ -957,6 +998,7 @@ def approve(db: Session, actor: User, doc: Document, note: str = "") -> None:
     _require(mine is not None, f"You are not an approver of {doc.ref}.")
     mine.acted_at = utcnow()
     _log(db, doc, actor, "Approved" + _on_behalf(mine, actor), APPROVAL, APPROVAL, note)
+    _close_group(db, doc, mine, actor)
     _advance_if_complete(db, doc, actor)
 
 
@@ -1148,7 +1190,7 @@ def _add_months(d: date, months: int) -> date:
 def acknowledgment_audience(db: Session, doc: Document | None = None) -> list[User]:
     """The mandatory readers of `doc` chosen by its Data Owner, else everybody with an active account."""
     query = db.query(User).filter(User.active.is_(True))
-    emails = [e.strip().lower() for e in (doc.readers if doc is not None else "").split(",") if e.strip()]
+    emails = doc.audience_emails if doc is not None else []
     if emails:
         query = query.filter(User.email.in_(emails))
     users = query.order_by(User.email).all()

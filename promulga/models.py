@@ -8,7 +8,10 @@ Vocabulary
 - *Revision*: a working file uploaded during a cycle (check-in). Revisions are
   kept for traceability but only publications are shown on the portal.
 - *Assignment*: a reviewer or approver of a document, with the moment they
-  acted in the current round (reset when a new round starts).
+  acted in the current round (reset when a new round starts). A group named as
+  reviewer or approver gives one assignment per member, marked with the group.
+- *Group*: people named together (local, or read from the SSO at sign-in), as
+  readers, reviewers or approvers: '@name' in a participant field.
 - *Event*: one line of the audit log. Never updated nor deleted.
 - *StageLog*: when each stage started, was due and ended (for the indicators).
 - *Acknowledgment*: "I have read and understood" for one published version.
@@ -27,7 +30,7 @@ from datetime import date, datetime, timezone
 from sqlalchemy import (
     Boolean, Column, Date, DateTime, ForeignKey, Integer, String, Table, Text, UniqueConstraint,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, object_session, relationship
 
 from .db import Base
 
@@ -127,6 +130,40 @@ class Token(Base):
     used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     user: Mapped[User] = relationship()
+
+
+group_members = Table(
+    "group_members",
+    Base.metadata,
+    Column("group_id", ForeignKey("groups.id", ondelete="CASCADE"), primary_key=True),
+    Column("user_id", ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
+)
+
+GROUP_LOCAL, GROUP_SSO = "local", "sso"
+
+
+class Group(Base):
+    """People named together as readers, reviewers or approvers ('@name').
+    'any_member': one member acting is enough for the whole group (else every member acts)."""
+
+    __tablename__ = "groups"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(50), unique=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    source: Mapped[str] = mapped_column(String(10), default=GROUP_LOCAL)     # local | sso (members from the SSO)
+    any_member: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    members: Mapped[list[User]] = relationship(secondary=group_members, order_by="User.email")
+
+    @property
+    def token(self) -> str:
+        return "@" + self.name
+
+    @property
+    def active_members(self) -> list[User]:
+        return [u for u in self.members if u.active]
 
 
 document_terms = Table(
@@ -263,8 +300,20 @@ class Document(Base):
 
     @property
     def audience_emails(self) -> list[str]:
-        """The named readers (e-mails, lower case)."""
-        return [e.strip().lower() for e in (self.readers or "").split(",") if e.strip()]
+        """The named readers (e-mails, lower case); a group ('@name') stands for its active members."""
+        out: list[str] = []
+        tokens = [e.strip().lower() for e in (self.readers or "").split(",") if e.strip()]
+        groups = [t[1:] for t in tokens if t.startswith("@")]
+        members: dict[str, list[str]] = {}
+        db = object_session(self)
+        if groups and db is not None:
+            for g in db.query(Group).filter(Group.name.in_(groups)).all():
+                members[g.name] = [u.email.lower() for u in g.active_members]
+        for t in tokens:
+            for email in (members.get(t[1:], []) if t.startswith("@") else [t]):
+                if email not in out:
+                    out.append(email)
+        return out
 
     def in_audience(self, user: User | None) -> bool:
         """Owner, reviewer, approver or named reader of the document."""
@@ -324,9 +373,11 @@ class Assignment(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     role: Mapped[str] = mapped_column(String(20))          # reviewer | approver
     acted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id", ondelete="SET NULL"), nullable=True)
 
     document: Mapped[Document] = relationship(back_populates="assignments")
     user: Mapped[User] = relationship()
+    group: Mapped[Group | None] = relationship()
 
 
 class Revision(Base):

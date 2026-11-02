@@ -8,6 +8,10 @@
       <label class="check picker-item"><input type="checkbox" name="{{ name }}_pick" value="{{ u.email }}" {{ 'checked' if u.email in (chosen or []) }}>
         {{ u.display }} <span class="muted small">{{ u.email }}</span></label>
       {% endfor %}
+      {% for g in groups or [] %}
+      <label class="check picker-item"><input type="checkbox" name="{{ name }}_pick" value="{{ g.token }}" {{ 'checked' if g.token in (chosen or []) }}>
+        <strong>{{ g.token }}</strong> <span class="muted small">group, {{ g.active_members | length }} member(s){{ ', one member is enough' if g.any_member }}</span></label>
+      {% endfor %}
     </div>
   </fieldset>
 {% endmacro %}

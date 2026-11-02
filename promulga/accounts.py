@@ -27,6 +27,46 @@ def normalise_email(email: str) -> str:
     return email
 
 
+GROUP_NAME = re.compile(r"[a-z0-9][a-z0-9._-]{1,49}")
+
+
+def parse_people(text: str) -> list[str]:
+    """Like parse_emails, but also keeps group tokens ('@dpo-team')."""
+    out: list[str] = []
+    for part in re.split(r"[,;\s]+", text or ""):
+        part = part.strip()
+        if not part:
+            continue
+        if part.startswith("@"):
+            token = part.lower()
+            if not GROUP_NAME.fullmatch(token[1:]):
+                raise AccountError(f"Invalid group name: {part}")
+        else:
+            token = normalise_email(part)
+        if token not in out:
+            out.append(token)
+    return out
+
+
+def sync_sso_groups(db: Session, user, groups) -> None:
+    """At an SSO sign-in: the user belongs to the SSO groups listed in the claim, and to no other SSO group.
+    SSO groups are created when first seen; local groups are never touched."""
+    from .models import GROUP_SSO, Group
+    if isinstance(groups, str):
+        groups = [g.strip() for g in groups.replace(";", ",").split(",")]
+    names = {str(g).strip().lower() for g in groups or [] if GROUP_NAME.fullmatch(str(g).strip().lower())}
+    for name in names:
+        group = db.query(Group).filter_by(name=name).first()
+        if group is None:
+            group = Group(name=name, source=GROUP_SSO, description="From the single sign-on")
+            db.add(group)
+        if group.source == GROUP_SSO and user not in group.members:
+            group.members.append(user)
+    for group in db.query(Group).filter_by(source=GROUP_SSO).all():
+        if group.name not in names and user in group.members:
+            group.members.remove(user)
+
+
 def parse_emails(text: str) -> list[str]:
     """Splits a comma/semicolon/newline separated list, validates, de-duplicates."""
     out: list[str] = []

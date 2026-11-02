@@ -25,6 +25,7 @@
       {% if user.has_role('manager') %}
         <a href="/admin/documents/new" class="{{ 'active' if path == '/admin/documents/new' }}">{{ _("+ New document") }}</a>
         <a href="/admin/taxonomies" class="{{ 'active' if path.startswith('/admin/taxonomies') }}">{{ _("Tags") }}</a>
+        <a href="/admin/groups" class="{{ 'active' if path.startswith('/admin/groups') }}">{{ _("Groups") }}</a>
         <a href="/admin/indicators" class="{{ 'active' if path.startswith('/admin/indicators') }}">{{ _("Indicators") }}</a>
         <a href="/admin/audit" class="{{ 'active' if path.startswith('/admin/audit') }}">{{ _("Audit log") }}</a>
       {% endif %}

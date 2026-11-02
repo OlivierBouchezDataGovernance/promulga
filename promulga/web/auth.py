@@ -194,6 +194,8 @@ async def oidc_callback(request: Request, db: Session = Depends(get_db)):
     if user is None or not user.active:
         flash(request, f"No active account for {email}. Ask an administrator to invite you.", "error")
         return redirect("/auth/login")
+    if cfg.oidc_role_map and info.get(cfg.oidc_role_claim) is not None:
+        accounts.sync_sso_groups(db, user, info.get(cfg.oidc_role_claim))   # PROM-70: SSO groups as recipients
     if str(info.get("name") or "").strip():   # the directory is the reference for names too
         user.name = str(info["name"]).strip()[:200]
     user.oidc_subject = str(info.get("sub", ""))[:255]
