@@ -193,3 +193,34 @@ def test_upload_page_and_settings_round_trip(client):
     # the settings keep the profile of each type
     settings = client.get("/admin/settings")
     assert "Knowledge=KNW=book-open=approval" in settings.text
+
+
+# -- PROM-69, PROM-71 --------------------------------------------------------------------------------------------
+
+def test_audience_in_plain_words(db):
+    admin = _admin(db)
+    site = site_settings.get_all(db)
+    doc = _publish(db, admin, classification="internal")
+    a = workflow.audience(doc, site)
+    assert a["label"] == "Public" and a["warning"], "an Internal document on an open portal is in fact public"
+    site["portal_access"] = "login"
+    assert workflow.audience(doc, site) == {"label": "Internal", "detail": "Anyone signed in to the portal.",
+                                            "warning": ""}
+    doc.classification = "confidential"
+    assert workflow.audience(doc, site)["label"] == "Restricted"
+
+
+def test_approver_decides_several_documents_at_once(db):
+    _reader(db, "app@example.org", role="contributor")
+    admin, approver = _admin(db), _user(db, "app@example.org")
+    out = workflow.upload_for_approval(db, admin, [("a.pdf", make_pdf("A")), ("b.pdf", make_pdf("B")),
+                                                   ("c.pdf", make_pdf("C"))],
+                                       doc_type="Knowledge", approver_emails=["app@example.org"])
+    a, b, c = [d for d, _ in out]
+    with pytest.raises(WorkflowError, match="explain"):
+        workflow.decide_many(db, approver, [a], "reject")
+    done, errors = workflow.decide_many(db, approver, [a, b], "approve")
+    assert done == [a.ref, b.ref] and not errors and a.status == b.status == "Published"
+    done, errors = workflow.decide_many(db, approver, [a, c], "reject", "Out of date")
+    assert done == [c.ref] and len(errors) == 1 and a.ref in errors[0]
+    assert c.status == "Draft" and a.status == "Published"

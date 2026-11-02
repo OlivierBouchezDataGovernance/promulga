@@ -265,6 +265,27 @@ async def new_document(request: Request, title: str = Form(""), doc_type: str = 
     return redirect(f"/admin/documents/{doc.id}")
 
 
+@router.post("/approvals", dependencies=[Depends(csrf_protect)])
+def decide_approvals(request: Request, doc_ids: list[str] = Form([]), decision: str = Form(""), note: str = Form(""),
+                     db: Session = Depends(get_db), user: User = Depends(require_contributor)):
+    docs = [_get_doc(db, i, user) for i in _int_list(doc_ids)]
+    if not docs:
+        flash(request, "Tick at least one document.", "error")
+        return redirect("/admin")
+    try:
+        done, errors = workflow.decide_many(db, user, docs, decision, note)
+        db.commit()
+    except workflow.WorkflowError as exc:
+        db.rollback()
+        flash(request, str(exc), "error")
+        return redirect("/admin")
+    if done:
+        flash(request, f"{'Approved' if decision == 'approve' else 'Rejected'}: {', '.join(done)}.", "success")
+    for e in errors:
+        flash(request, e, "error")
+    return redirect("/admin")
+
+
 @router.get("/documents/upload")
 def upload_form(request: Request, db: Session = Depends(get_db), user: User = Depends(require_contributor)):
     site = site_settings.get_all(db)
@@ -370,6 +391,7 @@ def document_page(doc_id: int, request: Request, db: Session = Depends(get_db),
     linked = {r.id for r in doc.references}
     return render(request, db, "admin/document.html", user=user, doc=doc, events=events, actions=actions,
                   workflow_label=workflow.workflow_label(doc),
+                  audience=workflow.audience(doc, site_settings.get_all(db)),
                   has_task=bool(actions - {"comment", "reply", "edit", "annex"}), max_mb=get_config().max_upload_mb,
                   handles_file=workflow.handles_file(doc, user), remarks=workflow.remarks(doc),
                   undecided=workflow.undecided(doc), languages=TRANSLATION_LANGUAGES,

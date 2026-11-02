@@ -3,10 +3,11 @@
 {% block content %}
 <div class="page-head"><div class="container">
   <h1>Users</h1>
-  <p class="muted small"><strong>viewer</strong>: reads the portal when it requires a login.
-    <strong>contributor</strong>: can be owner, reviewer or approver.
-    <strong>manager</strong>: Document Manager, creates documents and steers the workflow.
-    <strong>admin</strong>: manager + users, tags and settings.</p>
+  <p class="muted small"><strong>Reader</strong>: reads the portal when it requires a login.
+    <strong>Author</strong>: can be owner, reviewer or approver of documents, and uploads documents of an Approval only type.
+    <strong>Document Manager</strong>: creates documents and steers the workflow.
+    <strong>Administrator</strong>: Document Manager + users, tags and settings.
+    Reviewer and approver are not global roles: they are chosen on each document.</p>
 </div></div>
 <section class="section"><div class="container">
   <div class="card">
@@ -16,7 +17,7 @@
       <div><label for="email">E-mail</label><input id="email" type="email" name="email" required></div>
       <div><label for="name">Name</label><input id="name" type="text" name="name"></div>
       <div><label for="role">Role</label><select id="role" name="role">
-        {% for r in roles %}<option {{ 'selected' if r == 'contributor' }}>{{ r }}</option>{% endfor %}</select></div>
+        {% for r in roles %}<option value="{{ r }}" {{ 'selected' if r == 'contributor' }}>{{ role_labels[r] }}</option>{% endfor %}</select></div>
       <div><button class="btn" type="submit">Send invitation</button></div>
     </form>
     {% if not smtp_enabled %}<p class="notice small">SMTP is not configured: invitations stay in the <a href="/admin/outbox">Outbox</a>, where you can copy the link.</p>{% endif %}
@@ -29,7 +30,7 @@
       <tr>
         <td>{{ u.email }}</td>
         <td><input form="{{ f }}" type="text" name="name" value="{{ u.name }}" aria-label="Name"></td>
-        <td><select form="{{ f }}" name="role" aria-label="Role">{% for r in roles %}<option {{ 'selected' if r == u.role }}>{{ r }}</option>{% endfor %}</select></td>
+        <td><select form="{{ f }}" name="role" aria-label="Role">{% for r in roles %}<option value="{{ r }}" {{ 'selected' if r == u.role }}>{{ role_labels[r] }}</option>{% endfor %}</select></td>
         <td><label class="check"><input form="{{ f }}" type="checkbox" name="active" value="1" {{ 'checked' if u.active }}> active</label></td>
         <td class="small">{{ 'set' if u.password_hash else ('SSO' if u.oidc_subject else 'not yet') }}</td>
         <td class="small">{{ u.last_login_at | fdate or '-' }}</td>

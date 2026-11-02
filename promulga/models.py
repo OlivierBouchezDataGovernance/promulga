@@ -42,6 +42,14 @@ ROLE_CONTRIBUTOR = "contributor"  # may be owner, reviewer or approver of docume
 ROLE_MANAGER = "manager"          # Document Manager: creates documents, steers the workflow
 ROLE_ADMIN = "admin"              # manager + users, taxonomies, site settings
 ROLES = [ROLE_VIEWER, ROLE_CONTRIBUTOR, ROLE_MANAGER, ROLE_ADMIN]
+# Names shown in the interface (PROM-60); the keys above stay, so do OIDC_ROLE_MAP and the database.
+# Reviewer and approver are not global roles: one is reviewer or approver of a given document.
+ROLE_LABELS = {
+    ROLE_VIEWER: "Reader",
+    ROLE_CONTRIBUTOR: "Author",
+    ROLE_MANAGER: "Document Manager",
+    ROLE_ADMIN: "Administrator",
+}
 
 # Workflow stages.
 DRAFT, REVIEW, REVISION, APPROVAL, PUBLISHED, RETIRED = (

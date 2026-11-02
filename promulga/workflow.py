@@ -50,7 +50,7 @@ from .accounts import participant
 from .config import get_config
 from .models import (
     ACCEPTED, ACTIVE_STATUSES, APPROVAL, APPROVER, CLASSIFICATIONS, DRAFT, PUBLISHED, REJECTED, RETIRED, REVIEW,
-    REVIEWER, REVISION, ROLE_ADMIN, ROLE_CONTRIBUTOR, ROLE_MANAGER, STRICT_CLASSIFICATIONS, TRANSLATION_LANGUAGES, Acknowledgment, Assignment, Comment, Document, Event,
+    RESTRICTED_CLASSIFICATIONS, REVIEWER, REVISION, ROLE_ADMIN, ROLE_CONTRIBUTOR, ROLE_MANAGER, STRICT_CLASSIFICATIONS, TRANSLATION_LANGUAGES, Acknowledgment, Assignment, Comment, Document, Event,
     ExternalReference, Publication, Revision, StageLog, Term, Translation, User, WebhookDelivery, utcnow,
 )
 
@@ -967,6 +967,42 @@ def reject(db: Session, actor: User, doc: Document, note: str) -> None:
     _require(bool((note or "").strip()), "Please explain why you reject the document.")
     # Approval only: no correction stage; the owner uploads a corrected file and sends it again.
     _move(db, doc, DRAFT if is_quick(doc) else REVISION, actor, "Rejected" + _on_behalf(mine, actor), note.strip())
+
+
+def decide_many(db: Session, actor: User, docs: list[Document], decision: str,
+                note: str = "") -> tuple[list[str], list[str]]:
+    """Approves or rejects several documents at once (one audit event each). A document that cannot be decided is
+    left as it is and its reason returned. Returns (references decided, errors)."""
+    _require(decision in ("approve", "reject"), "Unknown decision.")
+    _require(decision == "approve" or bool((note or "").strip()), "Please explain why you reject the documents.")
+    done, errors = [], []
+    for doc in docs:
+        try:
+            with db.begin_nested():
+                (approve if decision == "approve" else reject)(db, actor, doc, note)
+            done.append(doc.ref)
+        except WorkflowError as exc:
+            errors.append(f"{doc.ref}: {exc}")
+    return done, errors
+
+
+def audience(doc: Document, site: dict) -> dict[str, str]:
+    """Who may read the published versions, in plain words: Public, Internal or Restricted.
+    Derived from the classification, the named readers and the portal access; never set by itself."""
+    classification = doc.classification or "internal"
+    portal_public = site.get("portal_access", "public") == "public"
+    if classification in RESTRICTED_CLASSIFICATIONS:
+        who = ("owner, reviewers, approvers and named readers only" if doc.is_strict else
+               "owner, reviewers, approvers, named readers and Document Managers")
+        return {"label": "Restricted", "detail": f"Signed-in {who}.", "warning": ""}
+    if classification == "internal":
+        if portal_public:
+            return {"label": "Public", "detail": "Anyone who can open the portal.",
+                    "warning": "This Internal document is on a portal open without sign-in: restrict the portal "
+                               "(Settings > Portal) or classify the document as Limited distribution."}
+        return {"label": "Internal", "detail": "Anyone signed in to the portal.", "warning": ""}
+    return {"label": "Public" if portal_public else "Internal",
+            "detail": "Anyone who can open the portal; may be exported to a public web site.", "warning": ""}
 
 
 def _on_behalf(assignment: Assignment, actor: User) -> str:

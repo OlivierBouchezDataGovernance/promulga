@@ -4,7 +4,7 @@
 {% block content %}
 <div class="page-head"><div class="container">
   <h1>My account</h1>
-  <p class="muted">{{ user.email }} - role: {{ user.role }}</p>
+  <p class="muted">{{ user.email }} - role: {{ role_labels[user.role] }}</p>
 </div></div>
 <section class="section"><div class="container" style="max-width:560px">
   <form class="card" method="post" action="/admin/account">

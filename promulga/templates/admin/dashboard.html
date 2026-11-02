@@ -22,6 +22,23 @@
     <h2>To approve {% if to_approve %}<span class="pill-count">{{ to_approve | length }}</span>{% endif %}</h2>
     <p class="small muted">Approve, or reject with a comment explaining what must change.</p>
     {{ task_table(to_approve, "Nothing to approve.", pending, site) }}
+    {% if to_approve | length > 1 %}
+    <details class="card" style="margin-top:1rem"><summary><strong>Decide several documents at once</strong></summary>
+      <form method="post" action="/admin/approvals">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <p class="small muted">Open and read each document first. One decision is recorded per document.</p>
+        {% for d in to_approve %}
+        <label class="check"><input type="checkbox" name="doc_ids" value="{{ d.id }}">
+          <a href="/admin/documents/{{ d.id }}">{{ d.ref }}</a> - {{ d.title }}
+          <span class="small muted">({{ d.doc_type }}, {{ d.classification_label }}{% if d.approval_pdf_path %}, <a href="/admin/documents/{{ d.id }}/approval.pdf">PDF to approve</a>{% endif %})</span></label>
+        {% endfor %}
+        <label for="bulk-note">Comment <span class="hint">(required to reject)</span></label>
+        <input id="bulk-note" type="text" name="note" maxlength="2000">
+        <p><button type="submit" name="decision" value="approve" class="btn">Approve the selection</button>
+          <button type="submit" name="decision" value="reject" class="btn btn-outline">Reject the selection</button></p>
+      </form>
+    </details>
+    {% endif %}
   </div>
   {% if following %}
   <div class="task-group" style="margin-top:2rem">
