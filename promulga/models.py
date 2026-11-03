@@ -92,18 +92,34 @@ DISTRIBUTION_ORDER = ("no", "internal", "public")
 CHATBOT_LABEL, WEBSITE_LABEL = "Chatbot use", "Website publication"
 
 
-def max_distribution(classification: str | None) -> str:
-    """The widest chatbot / website distribution a classification allows."""
+# Site setting (demo instances, PROM-73): Chatbot use and Website publication of internal documents may go up to
+# Public. Limited, confidential and audit documents keep the cap (No) whatever the setting.
+BEYOND_SETTING = "distribution_beyond_classification"
+
+
+def max_distribution(classification: str | None, beyond: bool = False) -> str:
+    """The widest chatbot / website distribution a classification allows (`beyond`: the demo setting is on)."""
     code = classification or "internal"
     if code in PUBLIC_CLASSIFICATIONS:
         return "public"
     if code in RESTRICTED_CLASSIFICATIONS:
         return "no"
-    return "internal"
+    return "public" if beyond else "internal"
 
 
-def allowed_distributions(classification: str | None) -> list[str]:
-    return list(DISTRIBUTION_ORDER[:DISTRIBUTION_ORDER.index(max_distribution(classification)) + 1])
+def allowed_distributions(classification: str | None, beyond: bool = False) -> list[str]:
+    return list(DISTRIBUTION_ORDER[:DISTRIBUTION_ORDER.index(max_distribution(classification, beyond)) + 1])
+
+
+def distribution_beyond(session: Session | None) -> bool:
+    """Is the demo setting BEYOND_SETTING on? Read once per session (site_settings.set_many forgets it)."""
+    if session is None:
+        return False
+    if BEYOND_SETTING not in session.info:
+        with session.no_autoflush:
+            row = session.get(Setting, BEYOND_SETTING)
+        session.info[BEYOND_SETTING] = bool(row is not None and row.value.strip() == "true")
+    return session.info[BEYOND_SETTING]
 
 # Decision of the owner on a review comment, during Revision.
 ACCEPTED, REJECTED = "accepted", "rejected"
@@ -340,12 +356,20 @@ class Document(Base):
     @property
     def feed_level(self) -> str:
         """What a chatbot may really use: nothing before the first publication, after the retirement or for an
-        Audit document; otherwise Chatbot use, capped by the classification."""
+        Audit document; otherwise Chatbot use, capped by the classification (internal documents up to Public when
+        the demo setting is on)."""
         if not self.current_version or self.status == RETIRED or self.is_strict:
             return "no"
-        top = max_distribution(self.classification)
+        top = max_distribution(self.classification, distribution_beyond(object_session(self)))
         chatbot = self.chatbot if self.chatbot in DISTRIBUTIONS else "no"
         return min(chatbot, top, key=DISTRIBUTION_ORDER.index)
+
+    @property
+    def beyond_classification(self) -> list[str]:
+        """Chatbot use / Website publication wider than the classification allows without the demo setting."""
+        top = max_distribution(self.classification)
+        return [label for label, value in ((CHATBOT_LABEL, self.chatbot), (WEBSITE_LABEL, self.website))
+                if value in DISTRIBUTIONS and DISTRIBUTION_ORDER.index(value) > DISTRIBUTION_ORDER.index(top)]
 
     @property
     def is_strict(self) -> bool:
@@ -740,12 +764,19 @@ def _log_channel_changes(session, _context, _instances) -> None:
     a new version in force that a chatbot may use is logged too, so that its clients fetch it again."""
     for obj in list(session.new) + list(session.dirty):
         if isinstance(obj, Document):
-            level = obj.feed_level
-            new_version = level != "no" and inspect(obj).attrs.current_version.history.has_changes()
-            if level != (obj.chatbot_feed or "no") or new_version:
-                obj.chatbot_feed = level
-                session.add(ChannelLog(document=obj, ref=obj.ref, level=level, version=obj.current_version or "",
-                                       at=utcnow()))
+            refresh_feed(session, obj)
+
+
+def refresh_feed(session: Session, doc: Document) -> bool:
+    """Store the chatbot level of `doc` and log it when it changed (or when a new version may be used)."""
+    level = doc.feed_level
+    new_version = level != "no" and inspect(doc).attrs.current_version.history.has_changes()
+    if level != (doc.chatbot_feed or "no") or new_version:
+        doc.chatbot_feed = level
+        session.add(ChannelLog(document=doc, ref=doc.ref, level=level, version=doc.current_version or "",
+                               at=utcnow()))
+        return True
+    return False
 
 
 class WebhookDelivery(Base):

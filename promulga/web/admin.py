@@ -1157,6 +1157,17 @@ async def save_workflow(request: Request, draft_days: int = Form(28), review_day
     return redirect("/admin/settings#workflow")
 
 
+@router.post("/settings/distribution", dependencies=[Depends(csrf_protect)])
+def save_distribution(request: Request, beyond: str = Form(""), db: Session = Depends(get_db),
+                      user: User = Depends(require_admin)):
+    changed = workflow.set_distribution_beyond(db, user, beyond == "1")
+    db.commit()
+    flash(request, ("Internal documents may now be used by a public chatbot and published on a public site."
+                    if beyond == "1" else "Chatbot use and Website publication are capped by the classification again.")
+          + f" Chatbot level of {changed} document(s) changed.", "success")
+    return redirect("/admin/settings#distribution")
+
+
 @router.post("/settings/portal", dependencies=[Depends(csrf_protect)])
 def save_portal(request: Request, portal_access: str = Form("public"), portal_show_owner: str = Form(""),
                 db: Session = Depends(get_db), user: User = Depends(require_admin)):

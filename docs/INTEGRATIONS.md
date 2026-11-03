@@ -84,7 +84,7 @@ curl -H "Authorization: Bearer prm_..." https://docs.example.org/api/v1/document
 |---|---|
 | `GET /api/v1/documents?status=&type=&tag=&chatbot=&website=&domain=&linked=` | all documents: metadata, stage, versions, tags, chatbot use and website publication (`no`, `internal`, `public`), data `domain`, `parent`, `catalog_links` (OpenMetadata glossary terms and data products), last periodic review confirmed; `linked` = fully qualified name of a glossary term or data product |
 | `GET /api/v1/documents/{ref}` | one document with its publications (PDF links, SHA-256) |
-| `GET /api/v1/corpus?audience=&since=` | knowledge feed of a chatbot (chatbot token only): clean text of the versions in force whose Chatbot use reaches the audience (`public`, or `internal` = Internal or Public; default: the token's), capped by the classification. With `since` (ISO date or date and time): only what was opened or republished since, plus `withdrawals` (ref, date, reason: retired, chatbot use, classification, audit, deleted) |
+| `GET /api/v1/corpus?audience=&since=` | knowledge feed of a chatbot (chatbot token only): clean text of the versions in force whose Chatbot use reaches the audience (`public`, or `internal` = Internal or Public; default: the token's), capped by the classification (internal documents may reach `public` when the demo setting *Distribution beyond the classification* is on). With `since` (ISO date or date and time): only what was opened or republished since, plus `withdrawals` (ref, date, reason: retired, chatbot use, classification, audit, deleted) |
 | `GET /api/v1/taxonomies` | taxonomies and tags, with their codes |
 
 Working files and comments are never exposed. This is the entry point for a

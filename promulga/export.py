@@ -41,7 +41,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from . import __version__, i18n, icons, naming, site_settings, storage
 from .config import get_config
-from .models import PUBLIC_CLASSIFICATIONS, RESTRICTED_CLASSIFICATIONS, RETIRED, Document
+from .models import PUBLIC_CLASSIFICATIONS, RESTRICTED_CLASSIFICATIONS, RETIRED, Document, distribution_beyond
 
 _env = Environment(loader=PackageLoader("promulga", "templates/export"), autoescape=select_autoescape(["html"]))
 i18n.install(_env)
@@ -67,8 +67,10 @@ def exported_documents(db: Session) -> list[Document]:
         return [d for d in docs if d.website in ("internal", "public")
                 and d.classification not in RESTRICTED_CLASSIFICATIONS]
     # Website selects the documents; the classification is a second lock: only external and
-    # commercial publications may leave the server for a public site.
-    return [d for d in docs if d.website == "public" and d.classification in PUBLIC_CLASSIFICATIONS]
+    # commercial publications may leave the server for a public site (internal ones too with the demo setting).
+    beyond = distribution_beyond(db)
+    return [d for d in docs if d.website == "public" and (d.classification in PUBLIC_CLASSIFICATIONS
+            or beyond and d.classification not in RESTRICTED_CLASSIFICATIONS)]
 
 
 def listed_documents(db: Session) -> list[Document]:

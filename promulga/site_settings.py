@@ -13,7 +13,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from .models import APPROVAL, DRAFT, REVIEW, REVISION, Setting
+from .models import APPROVAL, BEYOND_SETTING, DRAFT, REVIEW, REVISION, Setting
 
 DEFAULTS: dict[str, Any] = {
     # Look and feel ---------------------------------------------------------
@@ -62,6 +62,8 @@ DEFAULTS: dict[str, Any] = {
     "export_scope": "public",       # public = Website publication Public; all = Internal or Public (intranet)
     "export_list_others": False,    # also list the other published documents, without file nor text (LAB-76)
     "export_auto": False,           # push the public package after every publication
+    # Demo instances (PROM-73): internal documents may be fed to a public chatbot and published on a public site.
+    BEYOND_SETTING: False,          # set it with workflow.set_distribution_beyond (logs, recomputes the feed)
     # Internal bookkeeping (not shown in forms) -----------------------------
     "last_reminder_run": "",
     "export_pending": False,
@@ -135,6 +137,8 @@ def set_many(db: Session, values: dict[str, Any]) -> None:
             db.add(Setting(key=key, value=encoded))
         else:
             row.value = encoded
+        if key == BEYOND_SETTING:
+            db.info[key] = bool(value)   # models.distribution_beyond reads it from there
 
 
 # Workflow profiles of a document type.

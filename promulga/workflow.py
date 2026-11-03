@@ -53,6 +53,7 @@ from .models import (
     CATALOG_KINDS, DRAFT, PUBLISHED, REJECTED, RETIRED, REVIEW, RESTRICTED_CLASSIFICATIONS, REVIEWER, REVISION,
     ROLE_ADMIN, CatalogLink,
     ROLE_CONTRIBUTOR, ROLE_MANAGER, STRICT_CLASSIFICATIONS, WEBSITE_LABEL, allowed_distributions, max_distribution,
+    BEYOND_SETTING, distribution_beyond, refresh_feed,
     TRANSLATION_LANGUAGES, Acknowledgment, Assignment, Comment, Document, Event,
     ExternalReference, Group, Publication, Revision, StageLog, Term, Translation, User, WebhookDelivery, utcnow,
 )
@@ -251,7 +252,7 @@ def create_document(db: Session, actor: User, *, title: str, doc_type: str, summ
     _require(len(approver_emails) > 0, "At least one approver is required.")
     prefix = site_settings.doc_type_prefix(site, doc_type)
     _require(classification in CLASSIFICATIONS, "Unknown classification.")
-    _check_distribution(classification, chatbot, website)
+    _check_distribution(classification, chatbot, website, distribution_beyond(db))
     _check_summary(summary)
     parent = _check_parent(db, site, doc_type, parent_id, None)
 
@@ -394,14 +395,17 @@ def update_metadata(db: Session, actor: User, doc: Document, *, title: str, summ
                  "This document has children: an Audit document cannot be the parent of other documents.")
     new_class = classification if classification is not None else doc.classification
     lowered = []
+    beyond = distribution_beyond(db)
     wanted = {"chatbot": doc.chatbot if chatbot is None else chatbot,
               "website": doc.website if website is None else website}
     for field, label in (("chatbot", CHATBOT_LABEL), ("website", WEBSITE_LABEL)):
         _require(wanted[field] in DISTRIBUTIONS, f"Unknown value for {label}.")
-        top = max_distribution(new_class)
+        top = max_distribution(new_class, beyond)
         if _rank(wanted[field]) > _rank(top):
-            # A more restrictive classification lowers the distribution; asking for a wider one is refused.
-            _require(new_class != doc.classification, _distribution_error(label, new_class))
+            # A more restrictive classification (or the demo setting turned off) lowers the distribution;
+            # asking for a wider one is refused.
+            _require(new_class != doc.classification or wanted[field] == getattr(doc, field),
+                     _distribution_error(label, new_class, beyond))
             lowered.append(f"{label} lowered from {DISTRIBUTIONS[wanted[field]]} to {DISTRIBUTIONS[top]}: "
                            f"the classification {CLASSIFICATIONS[new_class]} does not allow more.")
             wanted[field] = top
@@ -429,17 +433,31 @@ def _rank(distribution: str) -> int:
     return DISTRIBUTION_ORDER.index(distribution)
 
 
-def _distribution_error(label: str, classification: str) -> str:
-    allowed = " or ".join(DISTRIBUTIONS[d] for d in allowed_distributions(classification))
+def _distribution_error(label: str, classification: str, beyond: bool = False) -> str:
+    allowed = " or ".join(DISTRIBUTIONS[d] for d in allowed_distributions(classification, beyond))
     return f"{label}: a document classified {CLASSIFICATIONS[classification]} can only be {allowed}."
 
 
-def _check_distribution(classification: str, chatbot: str, website: str) -> None:
+def _check_distribution(classification: str, chatbot: str, website: str, beyond: bool = False) -> None:
     """Chatbot and website distributions may not be wider than the classification allows:
-    public for external and commercial publications, internal for internal ones, none otherwise."""
+    public for external and commercial publications, internal for internal ones (public with the demo setting
+    `beyond`), none otherwise."""
     for value, label in ((chatbot, CHATBOT_LABEL), (website, WEBSITE_LABEL)):
         _require(value in DISTRIBUTIONS, f"Unknown value for {label}.")
-        _require(_rank(value) <= _rank(max_distribution(classification)), _distribution_error(label, classification))
+        _require(_rank(value) <= _rank(max_distribution(classification, beyond)),
+                 _distribution_error(label, classification, beyond))
+
+
+def set_distribution_beyond(db: Session, actor: User, on: bool) -> int:
+    """Turn the demo setting on or off (PROM-73): log who did it, then recompute what the chatbots may use, with a
+    channel event for every document whose level changed. Returns how many changed."""
+    if bool(site_settings.get(db, BEYOND_SETTING)) == on:
+        return 0
+    site_settings.set_many(db, {BEYOND_SETTING: on})
+    changed = sum(refresh_feed(db, doc) for doc in db.query(Document).all())
+    log_admin(db, actor, "Distribution beyond classification " + ("allowed (demo)" if on else "no longer allowed"),
+              f"Chatbot level of {changed} document(s) recomputed.")
+    return changed
 
 
 def _check_audience(doc: Document, actor: User) -> None:
