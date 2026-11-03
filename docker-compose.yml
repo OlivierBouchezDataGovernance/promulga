@@ -23,10 +23,12 @@ services:
       OIDC_CLIENT_SECRET_FILE: /run/secrets/oidc_client_secret
       ONLYOFFICE_JWT_SECRET_FILE: /run/secrets/onlyoffice_jwt_secret
       SIGNING_CERT_PASSWORD_FILE: /run/secrets/signing_cert_password
+      OPENMETADATA_TOKEN_FILE: /run/secrets/openmetadata_token
       ONLYOFFICE_URL: ${ONLYOFFICE_URL:-}
       ONLYOFFICE_INTERNAL_URL: http://onlyoffice
       PROMULGA_INTERNAL_URL: http://app:8000
-    secrets: [smtp_password, github_token, oidc_client_secret, onlyoffice_jwt_secret, signing_cert_password]
+    secrets: [smtp_password, github_token, oidc_client_secret, onlyoffice_jwt_secret, signing_cert_password,
+              openmetadata_token]
     volumes:
       - promulga-data:/data
     depends_on:
@@ -80,6 +82,8 @@ secrets:
     file: ./secrets/onlyoffice_jwt_secret
   signing_cert_password:
     file: ./secrets/signing_cert_password
+  openmetadata_token:
+    file: ./secrets/openmetadata_token
 
 volumes:
   promulga-data:

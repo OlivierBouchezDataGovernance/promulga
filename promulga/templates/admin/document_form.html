@@ -64,6 +64,9 @@
       <div><label for="keywords">Keywords <span class="hint">(separated by commas)</span></label>
         <input id="keywords" type="text" name="keywords" maxlength="500" value="{{ form.keywords or '' }}"></div>
     </div>
+    <label for="domain">Data domain <span class="hint">(one per document, e.g. the name of its domain in OpenMetadata; read by other tools through the API)</span></label>
+    <input id="domain" type="text" name="domain" maxlength="200" list="domain-list" value="{{ form.domain or '' }}">
+    <datalist id="domain-list">{% for d in domains %}<option value="{{ d }}">{% endfor %}</datalist>
     <div class="row">
       <div><label for="chatbot">Chatbot use <span class="hint">(may feed a chatbot)</span></label>
         <select id="chatbot" name="chatbot">

@@ -117,9 +117,11 @@ def run(db: Session, today: date | None = None) -> int:
 
 
 def _should_send(db: Session, doc: Document, user: User, kind: str, today: date, repeat: int) -> bool:
-    previous = (db.query(ReminderLog)
-                .filter_by(document_id=doc.id, user_id=user.id, kind=kind, stage_started_at=doc.stage_started_at)
-                .order_by(ReminderLog.sent_on.desc()).first())
+    query = db.query(ReminderLog).filter_by(document_id=doc.id, user_id=user.id, kind=kind,
+                                            stage_started_at=doc.stage_started_at)
+    if kind == "review" and doc.review_confirmed_at is not None:   # a confirmed review starts a new period
+        query = query.filter(ReminderLog.sent_on > doc.review_confirmed_at.date())
+    previous = query.order_by(ReminderLog.sent_on.desc()).first()
     if previous is None:
         return True
     if kind == "soon" or repeat <= 0:
@@ -133,7 +135,7 @@ def _item(doc: Document, kind: str, today: date, with_people: bool = False) -> d
         "ref": doc.ref, "title": doc.title, "status": doc.status, "link": doc_link(doc),
         "due": due.isoformat(), "kind": "overdue" if kind == "review" and due < today else kind,
         "days": abs((due - today).days), "review": kind == "review",
-        "expected": ("review it and ask a Document Manager to start a new revision (or confirm it unchanged)"
+        "expected": ("review it: confirm it is still valid, or ask a Document Manager to start a new revision"
                      if kind == "review" else EXPECTED.get(doc.status, "act")),
         "waiting_for": (doc.owner.display if kind == "review" else
                         ", ".join(u.display for u in pending_users(doc))) if with_people else "",

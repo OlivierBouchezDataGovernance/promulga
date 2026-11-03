@@ -5,6 +5,10 @@ external and commercial publications may have it); "all" = the documents with We
 "Internal" or "Public", for an intranet site. Drafts and Audit documents never leave the server.
 (Until Promulga 0.5 the tag EXPORT_TAG selected the documents: migration 0008 turned it into Website.)
 
+Option "list the others" (Settings > export, LAB-76): every other published document (except Audit) is listed
+too, with its metadata but without file, checksum nor text ("listed_only": true), for a library that shows the
+whole set and links only what may be read.
+
 The package is a folder that any web server can serve as it is:
 
     index.html          searchable list, in the site's colours
@@ -50,16 +54,29 @@ class ExportError(RuntimeError):
 TEXT_MAX = 60_000   # characters of each document's text in catalogue.json, for full-text search on the site
 
 
-def exported_documents(db: Session) -> list[Document]:
+def _published(db: Session) -> list[Document]:
     docs = (db.query(Document).options(selectinload(Document.terms), selectinload(Document.publications))
             .filter(Document.current_version != "", Document.status != RETIRED).order_by(Document.ref).all())
-    docs = [d for d in docs if not d.is_strict]   # Audit documents never leave the server
+    return [d for d in docs if not d.is_strict]   # Audit documents never leave the server
+
+
+def exported_documents(db: Session) -> list[Document]:
+    """The documents whose files leave the server."""
+    docs = _published(db)
     if site_settings.get(db, "export_scope") == "all":
         return [d for d in docs if d.website in ("internal", "public")
                 and d.classification not in RESTRICTED_CLASSIFICATIONS]
     # Website selects the documents; the classification is a second lock: only external and
     # commercial publications may leave the server for a public site.
     return [d for d in docs if d.website == "public" and d.classification in PUBLIC_CLASSIFICATIONS]
+
+
+def listed_documents(db: Session) -> list[Document]:
+    """The documents listed without their files (option export_list_others), else none."""
+    if not site_settings.get(db, "export_list_others"):
+        return []
+    exported = {d.id for d in exported_documents(db)}
+    return [d for d in _published(db) if d.id not in exported]
 
 
 def build(db: Session) -> dict[str, bytes]:
@@ -70,16 +87,22 @@ def build(db: Session) -> dict[str, bytes]:
     files: dict[str, bytes] = {}
     entries = []
     exported = exported_documents(db)
-    for doc in exported:
+    listed = listed_documents(db)
+    shown = {d.id for d in exported + listed}
+    with_files = {d.id for d in exported}
+    for doc in sorted(exported + listed, key=lambda d: d.ref):
         versions = []
+        full = doc.id in with_files
         for pub in doc.publications:   # newest first
-            name = naming.file_name(doc, ".pdf", site, version=pub.version, draft=False,
-                                    published=pub.published_at)
-            files[name] = storage.read_bytes(pub.pdf_path)
-            versions.append({"version": pub.version, "published": pub.published_at.isoformat(), "file": name,
-                             "url": f"{base}/{name}" if base else name, "sha256": pub.sha256,
-                             "approved_by": pub.approved_by, "change_note": pub.change_note,
-                             "signed": pub.signed, "bytes": len(files[name])})
+            version = {"version": pub.version, "published": pub.published_at.isoformat(),
+                       "approved_by": pub.approved_by, "change_note": pub.change_note, "signed": pub.signed}
+            if full:
+                name = naming.file_name(doc, ".pdf", site, version=pub.version, draft=False,
+                                        published=pub.published_at)
+                files[name] = storage.read_bytes(pub.pdf_path)
+                version.update({"file": name, "url": f"{base}/{name}" if base else name, "sha256": pub.sha256,
+                                "bytes": len(files[name])})
+            versions.append(version)
         entries.append({
             "ref": doc.ref, "id": doc.id_label, "title": doc.latest_publication.title, "description": doc.summary,
             "type": doc.doc_type, "type_icon": site_settings.doc_type_icon(site, doc.doc_type),
@@ -87,7 +110,8 @@ def build(db: Session) -> dict[str, bytes]:
             "next_review": doc.next_review.isoformat() if doc.next_review else "",
             "owner": doc.owner.display if site.get("portal_show_owner") else "",
             "tags": [{"taxonomy": t.taxonomy.name, "name": t.name, "code": t.code} for t in doc.terms],
-            "parent": doc.parent.ref if doc.parent and doc.parent in exported else "",
+            "parent": doc.parent.ref if doc.parent and doc.parent.id in shown else "",
+            "domain": doc.domain or "",
             "classification": doc.classification_label, "classification_code": doc.classification,
             "chatbot": doc.chatbot, "website": doc.website,
             "keywords": [k.strip() for k in (doc.keywords or "").split(",") if k.strip()],
@@ -95,7 +119,8 @@ def build(db: Session) -> dict[str, bytes]:
                            for r in doc.references],
             "translations": [{"language": t.language, "version": t.version, "notice": t.notice}
                              for t in doc.translations if t.is_current],
-            "text": (doc.latest_publication.text or "")[:TEXT_MAX],
+            "text": (doc.latest_publication.text or "")[:TEXT_MAX] if full else "",
+            "listed_only": not full,
             "versions": versions,
         })
     generated = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
@@ -135,13 +160,13 @@ def _mark_svg() -> str:
 def _csv(entries: list[dict]) -> bytes:
     out = io.StringIO()
     w = csv.writer(out)
-    w.writerow(["ref", "title", "type", "version", "published", "next_review", "tags", "chatbot", "website",
-                "file", "sha256"])
+    w.writerow(["ref", "title", "type", "version", "published", "next_review", "domain", "tags", "chatbot",
+                "website", "file", "sha256"])
     for e in entries:
         current = e["versions"][0]
-        w.writerow([e["ref"], e["title"], e["type"], e["version"], e["published"], e["next_review"],
+        w.writerow([e["ref"], e["title"], e["type"], e["version"], e["published"], e["next_review"], e["domain"],
                     "; ".join(f"{t['taxonomy']}: {t['name']}" for t in e["tags"]), e["chatbot"], e["website"],
-                    current["file"], current["sha256"]])
+                    current.get("file", ""), current.get("sha256", "")])
     return out.getvalue().encode()
 
 
@@ -156,14 +181,14 @@ def _dcat(catalogue: dict, base: str) -> dict:
             "@id": uri(f"#{e['ref']}"), "@type": "dcat:Resource",
             "dct:identifier": e["ref"], "dct:title": e["title"], "dct:description": e["description"],
             "dct:type": e["type"], "owl:versionInfo": e["version"], "dct:issued": e["published"],
-            "dcat:keyword": [t["name"] for t in e["tags"]],
+            "dcat:keyword": [t["name"] for t in e["tags"]] + e["keywords"],
             "dcat:distribution": [{
                 "@type": "dcat:Distribution", "dct:title": f"{e['ref']} version {v['version']}",
                 "dcat:downloadURL": {"@id": uri(v["file"])}, "dct:format": "PDF", "dcat:mediaType": "application/pdf",
                 "dct:issued": v["published"], "dcat:byteSize": v["bytes"],
                 "spdx:checksum": {"@type": "spdx:Checksum", "spdx:algorithm": "spdx:checksumAlgorithm_sha256",
                                   "spdx:checksumValue": v["sha256"]},
-            } for v in e["versions"]],
+            } for v in e["versions"] if "file" in v],
         })
     return {
         "@context": {"dcat": "http://www.w3.org/ns/dcat#", "dct": "http://purl.org/dc/terms/",

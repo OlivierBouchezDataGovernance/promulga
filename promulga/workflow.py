@@ -45,12 +45,13 @@ import json
 
 from sqlalchemy import func
 
-from . import docx_meta, mailer, naming, pdf, site_settings, storage, text
+from . import catalog, docx_meta, mailer, naming, pdf, site_settings, storage, text
 from .accounts import participant
 from .config import get_config
 from .models import (
     ACCEPTED, ACTIVE_STATUSES, APPROVAL, APPROVER, CHATBOT_LABEL, CLASSIFICATIONS, DISTRIBUTION_ORDER, DISTRIBUTIONS,
-    DRAFT, PUBLISHED, REJECTED, RETIRED, REVIEW, RESTRICTED_CLASSIFICATIONS, REVIEWER, REVISION, ROLE_ADMIN,
+    CATALOG_KINDS, DRAFT, PUBLISHED, REJECTED, RETIRED, REVIEW, RESTRICTED_CLASSIFICATIONS, REVIEWER, REVISION,
+    ROLE_ADMIN, CatalogLink,
     ROLE_CONTRIBUTOR, ROLE_MANAGER, STRICT_CLASSIFICATIONS, WEBSITE_LABEL, allowed_distributions, max_distribution,
     TRANSLATION_LANGUAGES, Acknowledgment, Assignment, Comment, Document, Event,
     ExternalReference, Group, Publication, Revision, StageLog, Term, Translation, User, WebhookDelivery, utcnow,
@@ -187,6 +188,8 @@ def allowed_actions(doc: Document, user: User) -> set[str]:
         actions.add("review_done")
     if doc.status == APPROVAL and acting_assignment(doc, user, APPROVER):
         actions |= {"approve", "reject"}
+    if doc.status == PUBLISHED and doc.next_review is not None and owner_or_manager:
+        actions.add("confirm_review")
     if is_manager(user):
         actions.add("edit")
         if doc.status == REVIEW:
@@ -227,7 +230,7 @@ def create_document(db: Session, actor: User, *, title: str, doc_type: str, summ
                     ack_required: bool = False, classification: str = "internal",
                     keywords: str = "", readers: list[str] | None = None,
                     parent_id: int | None = None, number: int | None = None, notify: bool = True,
-                    chatbot: str = "no", website: str = "no") -> Document:
+                    chatbot: str = "no", website: str = "no", domain: str = "") -> Document:
     """`number` reserves a given {ID} (e.g. to import a set whose references are already written in the
     documents); by default the next free number is used.
     A document type with the Approval only profile has no reviewers; an Author (contributor) may create such a
@@ -262,7 +265,8 @@ def create_document(db: Session, actor: User, *, title: str, doc_type: str, summ
                    doc_type=doc_type, owner=owner, status=DRAFT, next_version="1.0",
                    change_note="Initial version", stage_due=_due(site, DRAFT), stage_started_at=utcnow(),
                    review_months=review_months, ack_required=ack_required, classification=classification,
-                   chatbot=chatbot, website=website, keywords=_clean_keywords(keywords), readers=", ".join(readers or []), parent=parent)
+                   chatbot=chatbot, website=website, keywords=_clean_keywords(keywords), readers=", ".join(readers or []), parent=parent,
+                   domain=clean_domain(domain))
     db.add(doc)
     doc.terms = db.query(Term).filter(Term.id.in_(term_ids or [0])).all()
     doc.ref = naming.build_ref(doc, prefix)
@@ -364,7 +368,7 @@ def update_metadata(db: Session, actor: User, doc: Document, *, title: str, summ
                     term_ids: list[int], review_months: int | None = None, ack_required: bool | None = None,
                     classification: str | None = None, keywords: str | None = None,
                     readers: list[str] | None = None, parent_id: int | None | bool = False,
-                    chatbot: str | None = None, website: str | None = None) -> list[str]:
+                    chatbot: str | None = None, website: str | None = None, domain: str | None = None) -> list[str]:
     """`parent_id` False = leave the parent unchanged; None = no parent; an id = that parent.
     Returns warnings: the chatbot / website distributions lowered because the new classification no
     longer allows them."""
@@ -410,6 +414,9 @@ def update_metadata(db: Session, actor: User, doc: Document, *, title: str, summ
         doc.classification = classification
     if keywords is not None:
         doc.keywords = _clean_keywords(keywords)
+    if domain is not None and clean_domain(domain) != doc.domain:
+        before += f", domain '{doc.domain}'"
+        doc.domain = clean_domain(domain)
     if readers is not None:
         doc.readers = ", ".join(readers)
     _check_audience(doc, actor)
@@ -735,6 +742,17 @@ def cover_logo(site: dict) -> tuple[bytes, str] | None:
     return path.read_bytes(), path.suffix.lower()
 
 
+def clean_domain(value: str | None) -> str:
+    """The data domain: one name or fully qualified name (e.g. an OpenMetadata domain), spaces normalised."""
+    return " ".join((value or "").split())[:200]
+
+
+def domains(db: Session) -> list[str]:
+    """The domains already given to documents, for the form's suggestions."""
+    return [d for (d,) in db.query(Document.domain).filter(Document.domain != "").distinct()
+            .order_by(Document.domain).all()]
+
+
 def _clean_keywords(text: str) -> str:
     words = [w.strip() for w in (text or "").replace(";", ",").split(",") if w.strip()]
     return ", ".join(dict.fromkeys(words))[:500]
@@ -847,6 +865,61 @@ def import_word_comments(db: Session, doc: Document) -> int:
     if added:
         db.flush()
         db.refresh(doc)
+    return added
+
+
+def import_pdf_annotations(db: Session, actor: User, doc: Document, filename: str, data: bytes) -> int:
+    """PROM-44: the annotations of a PDF annotated by a reviewer (Acrobat Reader, Edge ...) become remarks for
+    the owner: author, page and text; a reply in the PDF becomes a reply. Each annotation is imported once; the
+    annotated copy is attached to the imported remarks. Same rights as a comment."""
+    _require_status(doc, *ACTIVE_STATUSES)
+    _require(can_see(doc, actor), "You do not take part in this document.")
+    _require(doc.status != REVISION or doc.owner_id == actor.id or is_manager(actor),
+             "During the revision you can only reply to the existing remarks: the review is over.")
+    name = storage.safe_filename(filename or "annotated.pdf")
+    _require(storage.extension(name) == ".pdf", "Upload the annotated copy as a PDF file.")
+    _require(0 < len(data) <= get_config().max_upload_mb * 1024 * 1024,
+             f"The file is empty or larger than {get_config().max_upload_mb} MB.")
+    try:
+        found = pdf.annotations(data)
+    except ValueError as exc:
+        raise WorkflowError(str(exc)) from exc
+    _require(bool(found), "This PDF has no annotation with a text (sticky notes, highlights with a comment ...).")
+    digest = hashlib.sha256(data).hexdigest()[:12]
+    known = {c.external_id: c for c in doc.comments if c.external_id}
+    people = {}
+    for u in [doc.owner] + [a.user for a in doc.assignments]:
+        people[u.display.lower()] = u
+        people[u.email.lower()] = u
+
+    def external_id(key: str) -> str:
+        # /NM is the annotation's own id (kept when the PDF is annotated again); else its page and position
+        # in this file.
+        return (f"pdf:{key}" if not re.fullmatch(r"p\d+-\d+", key) else f"pdf:{digest}:{key}")[:100]
+
+    new = [item for item in found if external_id(item["key"]) not in known]
+    _require(bool(new), "Every annotation of this PDF was already imported.")
+    path, _ = storage.save_bytes(f"{doc.id}/comments", name, data)
+    for item in new:
+        key = external_id(item["key"])
+        # The PDF author is a name (often the computer's user name): unknown names are the uploader's remarks.
+        author = people.get(item["author"].lower()) or (actor if actor.id != doc.owner_id else None)
+        location = f"Page {item['page']}"
+        if item["author"] and (author is None or item["author"].lower() not in
+                               (author.display.lower(), author.email.lower())):
+            location += f" - annotation by {item['author']}"
+        parent = known.get(external_id(item["reply_to"])) if item["reply_to"] else None
+        comment = Comment(document=doc, author=author, author_label=(item["author"] or actor.display)[:200],
+                          source="pdf", location=location[:300], external_id=key,
+                          body=item["text"][:10_000], stage=doc.status, version=doc.next_version,
+                          revision=doc.latest_revision, parent_id=parent.id if parent else None,
+                          attachment_name=name, attachment_path=path)
+        db.add(comment)
+        db.flush()
+        known[key] = comment
+    added = len(new)
+    _log(db, doc, actor, f"{added} remark(s) imported from an annotated PDF", doc.status, doc.status, name)
+    db.refresh(doc)
     return added
 
 
@@ -985,6 +1058,57 @@ def unlink_reference(db: Session, actor: User, doc: Document, ref: ExternalRefer
 
 
 # ---------------------------------------------------------------------------
+# Data catalogue (OpenMetadata): glossary terms and data products (PROM-48)
+# ---------------------------------------------------------------------------
+
+def add_catalog_link(db: Session, actor: User, doc: Document, kind: str, fqn: str) -> tuple[CatalogLink, str]:
+    """Links `doc` to a glossary term or data product. With an OpenMetadata token, the entity must exist and a
+    glossary term gets the document in its References. Returns the link and a warning ('' when none): a failed
+    write in OpenMetadata does not prevent the link."""
+    _require_owner_or_manager(doc, actor)
+    _require(kind in CATALOG_KINDS, "Choose a glossary term or a data product.")
+    fqn = (fqn or "").strip()
+    _require(0 < len(fqn) <= 500, "Give the fully qualified name, e.g. Business Glossary.Customer.")
+    _require(not any(l.kind == kind and l.fqn == fqn for l in doc.catalog_links),
+             f"{doc.ref} is already linked to {fqn}.")
+    try:
+        label = catalog.lookup(kind, fqn)
+    except catalog.CatalogError as exc:
+        raise WorkflowError(str(exc)) from exc
+    link = CatalogLink(document=doc, kind=kind, fqn=fqn, label=(label or "")[:300], created_by_id=actor.id)
+    db.add(link)
+    db.flush()
+    _log(db, doc, actor, f"Linked to {CATALOG_KINDS[kind]['label'].lower()}", doc.status, doc.status, fqn)
+    return link, _sync(db, link)
+
+
+def remove_catalog_link(db: Session, actor: User, doc: Document, link: CatalogLink) -> str:
+    _require_owner_or_manager(doc, actor)
+    _require(link.document_id == doc.id, "Unknown link.")
+    warning = _sync(db, link, remove=True)
+    _log(db, doc, actor, f"Link to {link.kind_label.lower()} removed", doc.status, doc.status, link.fqn)
+    db.delete(link)
+    db.flush()
+    db.refresh(doc)
+    return warning
+
+
+def sync_catalog(db: Session, doc: Document) -> list[str]:
+    """Writes the links of `doc` in OpenMetadata again (e.g. after its first publication). Returns warnings."""
+    return [w for w in (_sync(db, link) for link in doc.catalog_links) if w]
+
+
+def _sync(db: Session, link: CatalogLink, remove: bool = False) -> str:
+    try:
+        if catalog.sync_link(link, remove=remove):
+            _log(db, link.document, None, "OpenMetadata updated", link.document.status, link.document.status,
+                 f"{'Removed from' if remove else 'Added to'} the references of {link.fqn}")
+        return ""
+    except catalog.CatalogError as exc:
+        return f"OpenMetadata was not updated: {exc}"
+
+
+# ---------------------------------------------------------------------------
 # Transitions
 # ---------------------------------------------------------------------------
 
@@ -1114,6 +1238,25 @@ def retire(db: Session, actor: User, doc: Document, note: str = "") -> None:
     _move(db, doc, RETIRED, actor, "Retired", note.strip(), notify=False)
 
 
+def confirm_review(db: Session, actor: User, doc: Document, note: str = "") -> None:
+    """PROM-46: the periodic review finds the published version still valid: no new version; records who
+    confirmed and when, and sets the next review date (review period of the document, else of the site)."""
+    _require_status(doc, PUBLISHED)
+    _require_owner_or_manager(doc, actor)
+    _require(doc.next_review is not None, f"{doc.ref} has no periodic review.")
+    site = site_settings.get_all(db)
+    months = doc.review_months if doc.review_months is not None else int(site.get("review_months") or 0)
+    previous = doc.next_review
+    doc.next_review = _add_months(date.today(), months) if months > 0 else None
+    doc.review_confirmed_at = utcnow()
+    doc.review_confirmed_by_id = actor.id
+    detail = (f"Version {doc.current_version} still valid. Review was due {previous.isoformat()}; next review "
+              + (doc.next_review.isoformat() if doc.next_review else "none") + ".")
+    note = (note or "").strip()[:2000]
+    _log(db, doc, actor, "Periodic review confirmed", doc.status, doc.status, detail + (f" {note}" if note else ""))
+    webhook(db, site, "Periodic review confirmed", doc, actor, detail)
+
+
 def _move(db: Session, doc: Document, status: str, actor: User | None, action: str, detail: str = "",
           site: dict | None = None, notify: bool = True) -> None:
     site = site or site_settings.get_all(db)
@@ -1215,6 +1358,8 @@ def _publish(db: Session, doc: Document, actor: User, site: dict) -> Publication
     db.refresh(doc)          # publications are ordered newest first
     if doc.ack_required:
         _ask_acknowledgments(db, doc, site)
+    for warning in sync_catalog(db, doc):    # first publication: the glossary terms may now name it
+        _log(db, doc, None, "OpenMetadata not updated", PUBLISHED, PUBLISHED, warning)
     if site.get("export_auto"):
         site_settings.set_many(db, {"export_pending": True})
     return publication

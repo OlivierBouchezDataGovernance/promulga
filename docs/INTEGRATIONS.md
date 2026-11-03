@@ -35,6 +35,14 @@ commercial publications only), `Internal` or `Public` for an intranet site
 (scope "all"). Until Promulga 0.5 the tag `EXPORT_TAG` selected them; the
 migration to 0.5 set Website publication = Public on those documents.
 
+Option *Also list every other published document*: the other published
+documents (Audit ones excepted) are listed too, with their metadata, without
+PDF, checksum nor text (`"listed_only": true` in `catalogue.json`), for a
+library that shows the whole set. Their titles become visible on the site,
+limited and confidential ones included: tick it only if that is acceptable.
+Each entry of `catalogue.json` carries `parent`, `keywords`, `domain` and the
+`text` of the version in force (60,000 characters at most).
+
 | File | Content |
 |---|---|
 | `index.html` | searchable list in the site colours, links to the PDFs |
@@ -74,7 +82,7 @@ curl -H "Authorization: Bearer prm_..." https://docs.example.org/api/v1/document
 
 | Endpoint | Content |
 |---|---|
-| `GET /api/v1/documents?status=&type=&tag=&chatbot=&website=` | all documents: metadata, stage, versions, tags, chatbot use and website publication (`no`, `internal`, `public`) |
+| `GET /api/v1/documents?status=&type=&tag=&chatbot=&website=&domain=&linked=` | all documents: metadata, stage, versions, tags, chatbot use and website publication (`no`, `internal`, `public`), data `domain`, `parent`, `catalog_links` (OpenMetadata glossary terms and data products), last periodic review confirmed; `linked` = fully qualified name of a glossary term or data product |
 | `GET /api/v1/documents/{ref}` | one document with its publications (PDF links, SHA-256) |
 | `GET /api/v1/corpus?audience=&since=` | knowledge feed of a chatbot (chatbot token only): clean text of the versions in force whose Chatbot use reaches the audience (`public`, or `internal` = Internal or Public; default: the token's), capped by the classification. With `since` (ISO date or date and time): only what was opened or republished since, plus `withdrawals` (ref, date, reason: retired, chatbot use, classification, audit, deleted) |
 | `GET /api/v1/taxonomies` | taxonomies and tags, with their codes |
@@ -83,6 +91,33 @@ Working files and comments are never exposed. This is the entry point for a
 data catalogue: an OpenMetadata ingestion script can read the documents and
 link them to glossary terms through their tags (the `catalogue.jsonld` of the
 export serves the same purpose for DCAT-aware catalogues).
+
+## Data catalogue: OpenMetadata
+
+Every document has a **data domain** (one per document, *Edit details*): the
+name of its domain in OpenMetadata, or any name your tools agree on. The
+migration to 0.6 fills it from the tag of the taxonomy *Domain* when there is
+one (the top of the tag tree). Other tools read it from the API (`domain`,
+`?domain=`) and from the export catalogue (`domain`).
+
+On the document page, *Data catalogue* links the document to **glossary terms**
+and **data products**, by their fully qualified name (`Business Glossary.Customer`).
+
+```bash
+OPENMETADATA_URL=https://openmetadata.example.org     # in .env
+nano secrets/openmetadata_token                       # token of a bot (Settings > Bots in OpenMetadata)
+```
+
+- Without `OPENMETADATA_URL`, the names are kept as typed.
+- With the URL, the domain and the links open the entity in OpenMetadata.
+- With a bot token as well, Promulga checks that the entity exists (and shows
+  its display name), and adds the document to the **References** of each
+  linked glossary term (name "REF Title", link to the portal page) once it is
+  published; unlinking removes it. Limited, confidential and Audit documents
+  are never named in OpenMetadata. The bot needs the right to edit glossary terms.
+- Domains and data products have no references in OpenMetadata: a catalogue
+  shows their documents by reading `GET /api/v1/documents?domain=...` or
+  `?linked=<data product FQN>`.
 
 ## Webhooks (Teams, Slack, any JSON endpoint)
 

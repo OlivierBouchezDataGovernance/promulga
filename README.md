@@ -95,6 +95,26 @@ New in 0.5 (in progress):
   Chatbot use lowered, more restrictive classification) to delete from the
   index. Catalogue tokens and chatbot tokens are created in Admin > API tokens.
 
+New in 0.6 (in progress):
+
+- **Confirm a periodic review** without a new version: the owner (or a
+  Document Manager) presses *Confirm* on the document page; Promulga records
+  who confirmed and when, sets the next review date and restarts the reminders.
+- **Annotated PDFs as remarks.** A reviewer annotates the PDF review copy in
+  Acrobat Reader, Edge or Preview and uploads it: every annotation (sticky
+  note, highlight with a comment...) becomes a remark for the owner, with its
+  author and page; replies stay replies; the same file imported again adds
+  only the new annotations.
+- **Data domain and OpenMetadata links.** Each document has a data domain and
+  may be linked to glossary terms and data products of OpenMetadata, shown on
+  the document page, in the API (`domain`, `catalog_links`, filters `?domain=`
+  and `?linked=`) and in the export. With a bot token, Promulga checks the
+  names and lists the published document in the *References* of the glossary
+  terms. See [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md).
+- **Export: list the other documents without their file** (option in Admin >
+  Export): a library shows the whole set (title, description, metadata) and
+  links only the documents whose Website publication allows it.
+
 New in 0.4.3:
 
 - **Distribution and reading on the document page.** The owner of a document

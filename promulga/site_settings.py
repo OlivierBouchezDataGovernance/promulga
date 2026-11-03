@@ -60,6 +60,7 @@ DEFAULTS: dict[str, Any] = {
     # Integrations -------------------------------------------------------------
     "webhook_urls": [],             # https URLs receiving a JSON message at each workflow event
     "export_scope": "public",       # public = Website publication Public; all = Internal or Public (intranet)
+    "export_list_others": False,    # also list the other published documents, without file nor text (LAB-76)
     "export_auto": False,           # push the public package after every publication
     # Internal bookkeeping (not shown in forms) -----------------------------
     "last_reminder_run": "",

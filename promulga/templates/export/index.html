@@ -53,12 +53,13 @@
       <h2>{{ d.title }}</h2>
       <p><span class="seal">Official version {{ d.version }} · in force since {{ d.published }}</span></p>
       {% if d.description %}<p>{{ d.description }}</p>{% endif %}
-      <p><a class="btn" href="{{ cur.file }}">Read version {{ d.version }} (PDF)</a></p>
+      {% if d.listed_only %}<p class="empty">Listed only: this document is not published on this site.</p>
+      {% else %}<p><a class="btn" href="{{ cur.file }}">Read version {{ d.version }} (PDF)</a></p>{% endif %}
       <div>{% for t in d.tags %}<span class="tag">{{ t.name }}</span>{% endfor %}</div>
       <details><summary>Details and previous versions</summary>
         <p>{% if d.owner %}Owner: {{ d.owner }}. {% endif %}Approved by {{ cur.approved_by }}.{% if d.next_review %} Next review: {{ d.next_review }}.{% endif %}<br>
-          SHA-256 of the current PDF: <code>{{ cur.sha256 }}</code>{% if cur.signed %} - electronically sealed{% endif %}</p>
-        <ul>{% for v in d.versions %}<li><a href="{{ v.file }}">Version {{ v.version }}</a> - {{ v.published }}{% if v.change_note %} - {{ v.change_note }}{% endif %}</li>{% endfor %}</ul>
+          {% if cur.sha256 %}SHA-256 of the current PDF: <code>{{ cur.sha256 }}</code>{% if cur.signed %} - electronically sealed{% endif %}{% endif %}</p>
+        <ul>{% for v in d.versions %}<li>{% if v.file %}<a href="{{ v.file }}">Version {{ v.version }}</a>{% else %}Version {{ v.version }}{% endif %} - {{ v.published }}{% if v.change_note %} - {{ v.change_note }}{% endif %}</li>{% endfor %}</ul>
       </details>
     </div>
   </article>
