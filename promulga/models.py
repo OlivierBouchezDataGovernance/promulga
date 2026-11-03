@@ -28,9 +28,9 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 
 from sqlalchemy import (
-    Boolean, Column, Date, DateTime, ForeignKey, Integer, String, Table, Text, UniqueConstraint,
+    Boolean, Column, Date, DateTime, ForeignKey, Integer, String, Table, Text, UniqueConstraint, event, inspect,
 )
-from sqlalchemy.orm import Mapped, mapped_column, object_session, relationship
+from sqlalchemy.orm import Mapped, Session, mapped_column, object_session, relationship
 
 from .db import Base
 
@@ -79,6 +79,27 @@ CLASSIFICATIONS = {
 PUBLIC_CLASSIFICATIONS = ("external", "commercial")
 RESTRICTED_CLASSIFICATIONS = ("limited", "confidential", "audit")
 STRICT_CLASSIFICATIONS = ("audit",)   # no role overrides the audience
+
+# Where a document may be deployed, apart from its sensitivity (the classification):
+#   chatbot: may feed a chatbot (retrieval corpus), website: may be published on a web site.
+#   no = nowhere, internal = an internal (intranet) chatbot or site, public = a public one.
+DISTRIBUTIONS = {"no": "No", "internal": "Internal", "public": "Public"}
+DISTRIBUTION_ORDER = ("no", "internal", "public")
+CHATBOT_LABEL, WEBSITE_LABEL = "Chatbot use", "Website publication"
+
+
+def max_distribution(classification: str | None) -> str:
+    """The widest chatbot / website distribution a classification allows."""
+    code = classification or "internal"
+    if code in PUBLIC_CLASSIFICATIONS:
+        return "public"
+    if code in RESTRICTED_CLASSIFICATIONS:
+        return "no"
+    return "internal"
+
+
+def allowed_distributions(classification: str | None) -> list[str]:
+    return list(DISTRIBUTION_ORDER[:DISTRIBUTION_ORDER.index(max_distribution(classification)) + 1])
 
 # Decision of the owner on a review comment, during Revision.
 ACCEPTED, REJECTED = "accepted", "rejected"
@@ -236,6 +257,9 @@ class Document(Base):
     next_review: Mapped[date | None] = mapped_column(Date, nullable=True)  # periodic review of the published version
     ack_required: Mapped[bool] = mapped_column(Boolean, default=False)     # readers must acknowledge
     classification: Mapped[str] = mapped_column(String(20), default="internal")  # key of CLASSIFICATIONS
+    chatbot: Mapped[str] = mapped_column(String(10), default="no")         # key of DISTRIBUTIONS
+    website: Mapped[str] = mapped_column(String(10), default="no")         # key of DISTRIBUTIONS
+    chatbot_feed: Mapped[str] = mapped_column(String(10), default="no")    # effective chatbot level (see feed_level)
     keywords: Mapped[str] = mapped_column(String(500), default="")         # free keywords, comma-separated
     readers: Mapped[str] = mapped_column(Text, default="")                 # mandatory readers' e-mails; '' = everybody
     checked_out_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
@@ -292,6 +316,24 @@ class Document(Base):
     @property
     def classification_label(self) -> str:
         return CLASSIFICATIONS.get(self.classification or "internal", CLASSIFICATIONS["internal"])
+
+    @property
+    def chatbot_label(self) -> str:
+        return DISTRIBUTIONS.get(self.chatbot or "no", "No")
+
+    @property
+    def website_label(self) -> str:
+        return DISTRIBUTIONS.get(self.website or "no", "No")
+
+    @property
+    def feed_level(self) -> str:
+        """What a chatbot may really use: nothing before the first publication, after the retirement or for an
+        Audit document; otherwise Chatbot use, capped by the classification."""
+        if not self.current_version or self.status == RETIRED or self.is_strict:
+            return "no"
+        top = max_distribution(self.classification)
+        chatbot = self.chatbot if self.chatbot in DISTRIBUTIONS else "no"
+        return min(chatbot, top, key=DISTRIBUTION_ORDER.index)
 
     @property
     def is_strict(self) -> bool:
@@ -626,6 +668,41 @@ class ApiToken(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+    # "" = catalogue token (documents, taxonomies); "internal" / "public" = knowledge feed of a chatbot of that
+    # audience (corpus only: a public token never sees internal documents).
+    audience: Mapped[str] = mapped_column(String(10), default="")
+
+
+class ChannelLog(Base):
+    """Every change of what a chatbot may use of a document (Document.feed_level): the knowledge feed tells its
+    clients what was withdrawn since their last call."""
+
+    __tablename__ = "channel_log"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    document_id: Mapped[int | None] = mapped_column(ForeignKey("documents.id", ondelete="SET NULL"), nullable=True,
+                                                    index=True)
+    ref: Mapped[str] = mapped_column(String(30), default="")
+    channel: Mapped[str] = mapped_column(String(20), default="chatbot")
+    level: Mapped[str] = mapped_column(String(10))
+    version: Mapped[str] = mapped_column(String(20), default="")   # version in force at that moment
+    at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+    document: Mapped[Document | None] = relationship()
+
+
+@event.listens_for(Session, "before_flush")
+def _log_channel_changes(session, _context, _instances) -> None:
+    """Publication, retirement, a new classification or Chatbot use: wherever it changes, log the new level;
+    a new version in force that a chatbot may use is logged too, so that its clients fetch it again."""
+    for obj in list(session.new) + list(session.dirty):
+        if isinstance(obj, Document):
+            level = obj.feed_level
+            new_version = level != "no" and inspect(obj).attrs.current_version.history.has_changes()
+            if level != (obj.chatbot_feed or "no") or new_version:
+                obj.chatbot_feed = level
+                session.add(ChannelLog(document=obj, ref=obj.ref, level=level, version=obj.current_version or "",
+                                       at=utcnow()))
 
 
 class WebhookDelivery(Base):

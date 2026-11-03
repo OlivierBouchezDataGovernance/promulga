@@ -29,8 +29,11 @@ docker compose --profile editor up -d --build
 
 ## Public export to a web site (GitHub)
 
-*Admin > Export* builds a static package of the published documents carrying
-the tag `EXPORT_TAG` (default `public`, in any taxonomy):
+*Admin > Export* builds a static package of the published documents whose
+**Website publication** allows it: `Public` for a public site (external and
+commercial publications only), `Internal` or `Public` for an intranet site
+(scope "all"). Until Promulga 0.5 the tag `EXPORT_TAG` selected them; the
+migration to 0.5 set Website publication = Public on those documents.
 
 | File | Content |
 |---|---|
@@ -71,8 +74,9 @@ curl -H "Authorization: Bearer prm_..." https://docs.example.org/api/v1/document
 
 | Endpoint | Content |
 |---|---|
-| `GET /api/v1/documents?status=&type=&tag=` | all documents: metadata, stage, versions, tags |
+| `GET /api/v1/documents?status=&type=&tag=&chatbot=&website=` | all documents: metadata, stage, versions, tags, chatbot use and website publication (`no`, `internal`, `public`) |
 | `GET /api/v1/documents/{ref}` | one document with its publications (PDF links, SHA-256) |
+| `GET /api/v1/corpus?audience=&since=` | knowledge feed of a chatbot (chatbot token only): clean text of the versions in force whose Chatbot use reaches the audience (`public`, or `internal` = Internal or Public; default: the token's), capped by the classification. With `since` (ISO date or date and time): only what was opened or republished since, plus `withdrawals` (ref, date, reason: retired, chatbot use, classification, audit, deleted) |
 | `GET /api/v1/taxonomies` | taxonomies and tags, with their codes |
 
 Working files and comments are never exposed. This is the entry point for a

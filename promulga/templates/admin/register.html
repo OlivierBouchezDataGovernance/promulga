@@ -10,6 +10,10 @@
       {% for s in statuses %}<option {{ 'selected' if s == status }}>{{ s }}</option>{% endfor %}</select></div>
     <div><label for="type">Type</label><select id="type" name="type"><option value="">All</option>
       {% for t in site.doc_types %}<option {{ 'selected' if t.name == type }}>{{ t.name }}</option>{% endfor %}</select></div>
+    <div><label for="chatbot">Chatbot</label><select id="chatbot" name="chatbot"><option value="">All</option>
+      {% for key, label in distributions.items() %}<option value="{{ key }}" {{ 'selected' if key == chatbot }}>{{ label }}</option>{% endfor %}</select></div>
+    <div><label for="website">Website</label><select id="website" name="website"><option value="">All</option>
+      {% for key, label in distributions.items() %}<option value="{{ key }}" {{ 'selected' if key == website }}>{{ label }}</option>{% endfor %}</select></div>
     {% if user.has_role('manager') %}<label class="check"><input type="checkbox" name="mine" value="true" {{ 'checked' if mine }}> Only mine</label>{% endif %}
     <div><button class="btn btn-sm" type="submit">Filter</button>
       <a class="btn btn-sm btn-outline" href="/admin/documents/tree">Hierarchy</a>
@@ -33,7 +37,7 @@
         <td class="small">{{ d.published_at | fdate or '-' }}</td>
       </tr>
     {% else %}
-      <tr><td colspan="9" class="empty">No document{% if q or status or type %} matches these filters{% endif %}.</td></tr>
+      <tr><td colspan="9" class="empty">No document{% if q or status or type or chatbot or website %} matches these filters{% endif %}.</td></tr>
     {% endfor %}
     </tbody>
   </table></div>

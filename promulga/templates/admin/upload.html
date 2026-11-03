@@ -45,6 +45,17 @@
       <div><label for="keywords">Keywords <span class="hint">(separated by commas)</span></label>
         <input id="keywords" type="text" name="keywords" maxlength="500" value="{{ form.keywords or '' }}"></div>
     </div>
+    <div class="row">
+      <div><label for="chatbot">Chatbot use</label>
+        <select id="chatbot" name="chatbot">
+          {% for key, label in distributions.items() %}<option value="{{ key }}" {{ 'selected' if (form.chatbot or 'no') == key }}>{{ label }}</option>{% endfor %}
+        </select></div>
+      <div><label for="website">Website publication</label>
+        <select id="website" name="website">
+          {% for key, label in distributions.items() %}<option value="{{ key }}" {{ 'selected' if (form.website or 'no') == key }}>{{ label }}</option>{% endfor %}
+        </select></div>
+    </div>
+    <p class="hint">Public needs an external or commercial publication, Internal an internal publication at least.</p>
     {{ term_checkboxes(taxonomies, selected_terms, can_add=user.has_role('manager')) }}
   </div>
   <div class="card">

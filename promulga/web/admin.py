@@ -163,7 +163,8 @@ def dashboard(request: Request, db: Session = Depends(get_db), user: User = Depe
                   pending=workflow.pending_users)
 
 
-def _register_query(db: Session, user: User, status: str, doc_type: str, q: str, mine: bool):
+def _register_query(db: Session, user: User, status: str, doc_type: str, q: str, mine: bool,
+                    chatbot: str = "", website: str = ""):
     query = db.query(Document).options(selectinload(Document.owner), selectinload(Document.terms))
     if not workflow.is_manager(user) or mine:
         query = query.outerjoin(Assignment).filter(
@@ -172,6 +173,10 @@ def _register_query(db: Session, user: User, status: str, doc_type: str, q: str,
         query = query.filter(Document.status == status)
     if doc_type:
         query = query.filter(Document.doc_type == doc_type)
+    if chatbot:
+        query = query.filter(Document.chatbot == chatbot)
+    if website:
+        query = query.filter(Document.website == website)
     if q:
         like = f"%{q.strip()}%"
         query = query.filter(or_(Document.ref.ilike(like), Document.title.ilike(like), Document.summary.ilike(like)))
@@ -180,10 +185,13 @@ def _register_query(db: Session, user: User, status: str, doc_type: str, q: str,
 
 @router.get("/documents")
 def register(request: Request, status: str = "", type: str = "", q: str = "", mine: bool = False,
+             chatbot: str = "", website: str = "",
              db: Session = Depends(get_db), user: User = Depends(require_contributor)):
-    docs = [d for d in _register_query(db, user, status, type, q, mine).all() if workflow.can_see(d, user)]
+    docs = [d for d in _register_query(db, user, status, type, q, mine, chatbot, website).all()
+            if workflow.can_see(d, user)]
     return render(request, db, "admin/register.html", user=user, docs=docs, statuses=STATUSES,
-                  status=status, type=type, q=q, mine=mine, pending=workflow.pending_users)
+                  status=status, type=type, q=q, mine=mine, chatbot=chatbot, website=website,
+                  pending=workflow.pending_users)
 
 
 @router.get("/documents/tree")
@@ -195,16 +203,17 @@ def register_tree(request: Request, db: Session = Depends(get_db), user: User = 
 
 @router.get("/documents.csv")
 def register_csv(status: str = "", type: str = "", q: str = "", mine: bool = False,
-                 db: Session = Depends(get_db), user: User = Depends(require_contributor)):
+                 chatbot: str = "", website: str = "", db: Session = Depends(get_db), user: User = Depends(require_contributor)):
     out = io.StringIO()
     w = csv.writer(out)
     w.writerow(["ID", "Title", "Type", "Owner", "Reviewers", "Approvers", "Status", "Stage due date",
-                "Version", "Next version", "Publication date", "Tags", "Last update"])
-    for d in _register_query(db, user, status, type, q, mine).all():
+                "Version", "Next version", "Publication date", "Tags", "Classification", "Chatbot", "Website",
+                "Last update"])
+    for d in _register_query(db, user, status, type, q, mine, chatbot, website).all():
         w.writerow([d.ref, d.title, d.doc_type, d.owner.email, ", ".join(a.user.email for a in d.reviewers),
                     ", ".join(a.user.email for a in d.approvers), d.status, d.stage_due or "", d.current_version,
                     d.next_version, d.published_at or "", ", ".join(t.name for t in d.terms),
-                    d.updated_at.strftime("%Y-%m-%d %H:%M")])
+                    d.classification_label, d.chatbot_label, d.website_label, d.updated_at.strftime("%Y-%m-%d %H:%M")])
     return StreamingResponse(iter([out.getvalue()]), media_type="text/csv",
                              headers={"Content-Disposition": "attachment; filename=register.csv"})
 
@@ -228,6 +237,7 @@ async def new_document(request: Request, title: str = Form(""), doc_type: str = 
                        terms: list[str] = Form([]), file: UploadFile | None = File(None),
                        review_months: str = Form(""), ack_required: str = Form(""),
                        classification: str = Form("internal"), keywords: str = Form(""),
+                       chatbot: str = Form("no"), website: str = Form("no"),
                        readers: str = Form(""), parent_id: str = Form(""), owner_other: str = Form(""),
                        reviewers_pick: list[str] = Form([]), approvers_pick: list[str] = Form([]),
                        readers_pick: list[str] = Form([]), pending_file: str = Form(""),
@@ -241,7 +251,8 @@ async def new_document(request: Request, title: str = Form(""), doc_type: str = 
             reviewer_emails=_people(reviewers, reviewers_pick), approver_emails=_people(approvers, approvers_pick),
             term_ids=_int_list(terms) + await _typed_tags(request, db, user), file=upload, review_months=_months(review_months),
             ack_required=ack_required == "1", classification=classification, keywords=keywords,
-            readers=_people(readers, readers_pick), parent_id=_parent_id(parent_id))
+            readers=_people(readers, readers_pick), parent_id=_parent_id(parent_id),
+            chatbot=chatbot, website=website)
         db.commit()
     except (workflow.WorkflowError, accounts.AccountError, ValueError) as exc:
         db.rollback()
@@ -257,6 +268,7 @@ async def new_document(request: Request, title: str = Form(""), doc_type: str = 
                             "reviewers": ", ".join(_people(reviewers, reviewers_pick)),
                             "approvers": ", ".join(_people(approvers, approvers_pick)),
                             "classification": classification, "keywords": keywords,
+                            "chatbot": chatbot, "website": website,
                             "readers": ", ".join(_people(readers, readers_pick)), "parent_id": parent_id},
                       messages=request.session.pop("flash", []), **_form_users(db), **_parent_options(db))
     _drop_pending(pending_file)
@@ -300,13 +312,15 @@ def upload_form(request: Request, db: Session = Depends(get_db), user: User = De
 async def upload_documents(request: Request, files: list[UploadFile] = File([]), doc_type: str = Form(""),
                            summary: str = Form(""), classification: str = Form("internal"),
                            keywords: str = Form(""), terms: list[str] = Form([]),
+                           chatbot: str = Form("no"), website: str = Form("no"),
                            approvers_pick: list[str] = Form([]), readers_pick: list[str] = Form([]),
                            db: Session = Depends(get_db), user: User = Depends(require_contributor)):
     try:
         uploads = [u for u in [await _read_upload(f) for f in files] if u is not None]
         out = workflow.upload_for_approval(
             db, user, uploads, doc_type=doc_type, approver_emails=approvers_pick, summary=summary,
-            term_ids=_int_list(terms) + await _typed_tags(request, db, user), classification=classification, keywords=keywords, readers=readers_pick)
+            term_ids=_int_list(terms) + await _typed_tags(request, db, user), classification=classification, keywords=keywords, readers=readers_pick,
+            chatbot=chatbot, website=website)
         db.commit()
     except (workflow.WorkflowError, accounts.AccountError, ValueError) as exc:
         db.rollback()
@@ -316,7 +330,7 @@ async def upload_documents(request: Request, files: list[UploadFile] = File([]),
                       selected_terms=set(_int_list(terms)), types=site_settings.approval_types(site),
                       max_files=workflow.UPLOAD_MAX_FILES, status_code=400,
                       form={"doc_type": doc_type, "summary": summary, "classification": classification,
-                            "keywords": keywords, "approvers": approvers_pick, "readers": readers_pick},
+                            "keywords": keywords, "chatbot": chatbot, "website": website, "approvers": approvers_pick, "readers": readers_pick},
                       messages=request.session.pop("flash", []), **_form_users(db))
     refs = ", ".join(d.ref for d, _ in out)
     flash(request, f"{len(out)} document(s) sent for approval: {refs}. The approvers received one e-mail.", "success")
@@ -335,6 +349,7 @@ def edit_document_form(doc_id: int, request: Request, db: Session = Depends(get_
             "approvers": ", ".join(workflow.participant_tokens(doc, "approver")),
             "review_months": "" if doc.review_months is None else doc.review_months, "ack_required": doc.ack_required,
             "classification": doc.classification, "keywords": doc.keywords, "readers": doc.readers,
+            "chatbot": doc.chatbot, "website": doc.website,
             "parent_id": str(doc.parent_id or "")}
     return render(request, db, "admin/document_form.html", user=user, doc=doc, taxonomies=_taxonomies(db),
                   selected_terms={t.id for t in doc.terms}, form=form, default_approvers=[],
@@ -346,6 +361,7 @@ async def edit_document(doc_id: int, request: Request, title: str = Form(""), su
                   owner: str = Form(""), reviewers: str = Form(""), approvers: str = Form(""),
                   terms: list[str] = Form([]), review_months: str = Form(""), ack_required: str = Form(""),
                   classification: str = Form("internal"), keywords: str = Form(""), readers: str = Form(""),
+                  chatbot: str = Form("no"), website: str = Form("no"),
                   parent_id: str = Form(""), owner_other: str = Form(""),
                   reviewers_pick: list[str] = Form([]), approvers_pick: list[str] = Form([]),
                   readers_pick: list[str] = Form([]),
@@ -353,11 +369,11 @@ async def edit_document(doc_id: int, request: Request, title: str = Form(""), su
     doc = _get_doc(db, doc_id, user)
     owner = _owner(owner, owner_other)
     try:
-        workflow.update_metadata(db, user, doc, title=title, summary=summary,
-                                 term_ids=_int_list(terms) + await _typed_tags(request, db, user),
-                                 review_months=_months(review_months), ack_required=ack_required == "1",
-                                 classification=classification, keywords=keywords,
-                                 readers=_people(readers, readers_pick), parent_id=_parent_id(parent_id))
+        lowered = workflow.update_metadata(
+            db, user, doc, title=title, summary=summary, term_ids=_int_list(terms) + await _typed_tags(request, db, user),
+            review_months=_months(review_months), ack_required=ack_required == "1",
+            classification=classification, keywords=keywords, readers=_people(readers, readers_pick),
+            parent_id=_parent_id(parent_id), chatbot=chatbot, website=website)
         new_people = (owner.strip().lower(), _people(reviewers, reviewers_pick), _people(approvers, approvers_pick))
         old_people = (doc.owner.email, workflow.participant_tokens(doc, "reviewer"),
                       workflow.participant_tokens(doc, "approver"))
@@ -366,6 +382,8 @@ async def edit_document(doc_id: int, request: Request, title: str = Form(""), su
                                          approver_emails=new_people[2])
         db.commit()
         flash(request, "Document updated.", "success")
+        for warning in lowered:
+            flash(request, warning, "error")
         _warn(request, doc)
     except (workflow.WorkflowError, accounts.AccountError, ValueError) as exc:
         db.rollback()
@@ -823,8 +841,7 @@ def save_group(request: Request, group_id: str = Form(""), name: str = Form(""),
 
 @router.get("/taxonomies")
 def taxonomies_page(request: Request, db: Session = Depends(get_db), user: User = Depends(require_manager)):
-    return render(request, db, "admin/taxonomies.html", user=user, taxonomies=_taxonomies(db),
-                  cfg_export_tag=get_config().export_tag)
+    return render(request, db, "admin/taxonomies.html", user=user, taxonomies=_taxonomies(db))
 
 
 @router.post("/taxonomies/new", dependencies=[Depends(csrf_protect)])
@@ -1357,12 +1374,14 @@ def api_tokens(request: Request, db: Session = Depends(get_db), user: User = Dep
 
 
 @router.post("/api-tokens", dependencies=[Depends(csrf_protect)])
-def create_api_token(request: Request, name: str = Form(""), db: Session = Depends(get_db),
-                     user: User = Depends(require_admin)):
+def create_api_token(request: Request, name: str = Form(""), audience: str = Form(""),
+                     db: Session = Depends(get_db), user: User = Depends(require_admin)):
+    audience = audience if audience in ("internal", "public") else ""
     token = "prm_" + secrets.token_urlsafe(32)
-    db.add(ApiToken(name=(name.strip() or "API client")[:100], created_by_id=user.id,
+    db.add(ApiToken(name=(name.strip() or "API client")[:100], created_by_id=user.id, audience=audience,
                     token_hash=hashlib.sha256(token.encode()).hexdigest()))
-    workflow.log_admin(db, user, "API token created", name.strip())
+    workflow.log_admin(db, user, "API token created",
+                       f"{name.strip()} ({f'chatbot, {audience} audience' if audience else 'catalogue'})")
     db.commit()
     request.session["new_api_token"] = token     # shown once, on the next page
     return redirect("/admin/api-tokens")

@@ -72,6 +72,28 @@ New in 0.5 (in progress):
 - **Who may read, in plain words** on the document page: Public, Internal or
   Restricted. Named readers may read Limited and Confidential documents.
 - Roles shown as Reader, Author, Document Manager and Administrator.
+- **Where a document may be deployed, apart from its sensitivity.** The
+  classification stays the sensitivity of the document; two new fields say
+  where it may go: **Chatbot use** (may feed a chatbot) and **Website
+  publication** (may be published on a web site), each *No*, *Internal* or
+  *Public* (default *No*). *Public* needs an external or commercial
+  publication, *Internal* an internal publication at least; limited,
+  confidential and audit documents stay at *No*, and a more restrictive
+  classification lowers them (noted in the audit trail). Set by Document
+  Managers at any stage, shown on the document pages, filters and CSV of the
+  register, the document control page of the Word and PDF files
+  (`{{CHATBOT}}`, `{{WEBSITE}}`), the API (`?chatbot=`, `?website=`) and the
+  export catalogue.
+- **Website publication selects the exported documents** (Public for the
+  public site, Internal or Public for an intranet site), instead of the tag
+  `EXPORT_TAG`: the migration sets Website publication on the documents
+  exported until now, so the site does not change.
+- **Knowledge feed for chatbots** (`GET /api/v1/corpus`): the clean text of
+  the versions in force a chatbot may use, for one audience (public or
+  internal) set on its token, a public token never seeing an internal
+  document; with `?since=` only what changed, and the withdrawals (retired,
+  Chatbot use lowered, more restrictive classification) to delete from the
+  index. Catalogue tokens and chatbot tokens are created in Admin > API tokens.
 
 New in 0.4.3:
 

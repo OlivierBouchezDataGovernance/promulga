@@ -15,6 +15,8 @@ Tags (case-insensitive in patterns, written {TAG}):
     AUTHOR       owner                       REVIEWERS / APPROVERS
     CREATED / UPDATED / PUBLISHED / NEXT_REVIEW   dates (yyyy-mm-dd)
     CLASSIFICATION  e.g. "Internal publication"   KEYWORDS  free keywords
+    CHATBOT      may feed a chatbot: No, Internal, Public
+    WEBSITE      may be published on a web site: No, Internal, Public
     CHANGE_NOTE  what the version in preparation changes
     LINK         address of the official version on the portal
     COPYRIGHT    copyright line of the cover page (Settings)   YEAR  current year
@@ -27,7 +29,7 @@ import re
 from datetime import date
 
 from .config import get_config
-from .models import CLASSIFICATIONS, PUBLISHED, RETIRED, Document
+from .models import CHATBOT_LABEL, CLASSIFICATIONS, DISTRIBUTIONS, PUBLISHED, WEBSITE_LABEL, RETIRED, Document
 
 TAG_RE = re.compile(r"\{([A-Za-z_]+)(?::([A-Za-z0-9_-]+))?\}")
 UNSAFE_FILENAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]+')
@@ -35,7 +37,8 @@ UNSAFE_FILENAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]+')
 # Human labels of the variables, in the order of the cover page.
 LABELS = [
     ("REF", "Reference"), ("TYPE", "Type"), ("PARENT", "Parent document"), ("DOMAIN", "Domain"), ("FULL_VERSION", "Version"),
-    ("STATUS", "Status"), ("CLASSIFICATION", "Classification"), ("AUTHOR", "Owner"),
+    ("STATUS", "Status"), ("CLASSIFICATION", "Classification"), ("CHATBOT", CHATBOT_LABEL),
+    ("WEBSITE", WEBSITE_LABEL), ("AUTHOR", "Owner"),
     ("REVIEWERS", "Reviewers"), ("APPROVERS", "Approvers"), ("CREATED", "Created"),
     ("UPDATED", "Last update"), ("PUBLISHED", "Published"), ("NEXT_REVIEW", "Next review"),
     ("KEYWORDS", "Keywords"), ("READERS", "Mandatory readers"), ("LINK", "Official version"),
@@ -97,6 +100,8 @@ def values(doc: Document, version: str | None = None, site: dict | None = None,
         "YEAR": str(date.today().year),
         "CLASSIFICATION": CLASSIFICATIONS.get(doc.classification or "internal", CLASSIFICATIONS["internal"]),
         "CLASSIFICATION_CODE": doc.classification or "internal",
+        "CHATBOT": DISTRIBUTIONS.get(doc.chatbot or "no", "No"),
+        "WEBSITE": DISTRIBUTIONS.get(doc.website or "no", "No"),
         "KEYWORDS": doc.keywords or "",
         "CHANGE_NOTE": doc.change_note or "",
         "READERS": reader_names(doc) or ("Every account" if doc.ack_required else "None"),

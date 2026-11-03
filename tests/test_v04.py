@@ -372,7 +372,9 @@ def test_export_scope_all_documents(db):
     workflow.submit(db, o, pol)
     workflow.approve(db, a, pol)
     workflow.add_reference(db, admin, pol, title="GDPR", issuer="EU", edition="2016/679", url="https://eur-lex.europa.eu")
-    assert export.exported_documents(db) == []                 # internal, untagged: not public
+    assert export.exported_documents(db) == []                 # Website publication No
+    charter.website = pol.website = "internal"
+    assert export.exported_documents(db) == []                 # Internal: not on the public site
     site_settings.set_many(db, {"export_scope": "all"})
     files = export.build(db)
     cat = json.loads(files["catalogue.json"])

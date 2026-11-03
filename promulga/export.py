@@ -1,8 +1,9 @@
-"""Public export: a static package of the documents tagged EXPORT_TAG (default "public").
+"""Public export: a static package of the documents whose Website publication allows it.
 
-Scope (Settings > export): "public" (default) = the documents tagged EXPORT_TAG whose classification is an
-external or commercial publication; "all" = every published document, whatever its tags and classification,
-for a demonstration or an intranet site. Drafts never leave the server in either case.
+Scope (Settings > export): "public" (default) = the documents with Website publication "Public" (only
+external and commercial publications may have it); "all" = the documents with Website publication
+"Internal" or "Public", for an intranet site. Drafts and Audit documents never leave the server.
+(Until Promulga 0.5 the tag EXPORT_TAG selected the documents: migration 0008 turned it into Website.)
 
 The package is a folder that any web server can serve as it is:
 
@@ -36,7 +37,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from . import __version__, i18n, icons, naming, site_settings, storage
 from .config import get_config
-from .models import PUBLIC_CLASSIFICATIONS, RETIRED, Document
+from .models import PUBLIC_CLASSIFICATIONS, RESTRICTED_CLASSIFICATIONS, RETIRED, Document
 
 _env = Environment(loader=PackageLoader("promulga", "templates/export"), autoescape=select_autoescape(["html"]))
 i18n.install(_env)
@@ -50,16 +51,15 @@ TEXT_MAX = 60_000   # characters of each document's text in catalogue.json, for 
 
 
 def exported_documents(db: Session) -> list[Document]:
-    tag = get_config().export_tag
     docs = (db.query(Document).options(selectinload(Document.terms), selectinload(Document.publications))
             .filter(Document.current_version != "", Document.status != RETIRED).order_by(Document.ref).all())
     docs = [d for d in docs if not d.is_strict]   # Audit documents never leave the server
     if site_settings.get(db, "export_scope") == "all":
-        return docs
-    # The tag selects the documents; the classification is a second lock: only external and
-    # commercial publications may leave the server, whatever their tags.
-    return [d for d in docs if d.classification in PUBLIC_CLASSIFICATIONS
-            and any(t.slug.lower() == tag or t.name.lower() == tag for t in d.terms)]
+        return [d for d in docs if d.website in ("internal", "public")
+                and d.classification not in RESTRICTED_CLASSIFICATIONS]
+    # Website selects the documents; the classification is a second lock: only external and
+    # commercial publications may leave the server for a public site.
+    return [d for d in docs if d.website == "public" and d.classification in PUBLIC_CLASSIFICATIONS]
 
 
 def build(db: Session) -> dict[str, bytes]:
@@ -89,6 +89,7 @@ def build(db: Session) -> dict[str, bytes]:
             "tags": [{"taxonomy": t.taxonomy.name, "name": t.name, "code": t.code} for t in doc.terms],
             "parent": doc.parent.ref if doc.parent and doc.parent in exported else "",
             "classification": doc.classification_label, "classification_code": doc.classification,
+            "chatbot": doc.chatbot, "website": doc.website,
             "keywords": [k.strip() for k in (doc.keywords or "").split(",") if k.strip()],
             "references": [{"title": r.title, "issuer": r.issuer, "edition": r.edition, "url": r.url, "label": r.label}
                            for r in doc.references],
@@ -134,11 +135,13 @@ def _mark_svg() -> str:
 def _csv(entries: list[dict]) -> bytes:
     out = io.StringIO()
     w = csv.writer(out)
-    w.writerow(["ref", "title", "type", "version", "published", "next_review", "tags", "file", "sha256"])
+    w.writerow(["ref", "title", "type", "version", "published", "next_review", "tags", "chatbot", "website",
+                "file", "sha256"])
     for e in entries:
         current = e["versions"][0]
         w.writerow([e["ref"], e["title"], e["type"], e["version"], e["published"], e["next_review"],
-                    "; ".join(f"{t['taxonomy']}: {t['name']}" for t in e["tags"]), current["file"], current["sha256"]])
+                    "; ".join(f"{t['taxonomy']}: {t['name']}" for t in e["tags"]), e["chatbot"], e["website"],
+                    current["file"], current["sha256"]])
     return out.getvalue().encode()
 
 
