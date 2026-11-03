@@ -56,7 +56,7 @@
         </select></div>
     </div>
     <p class="hint">Public needs an external or commercial publication, Internal an internal publication at least.</p>
-    {{ term_checkboxes(taxonomies, selected_terms) }}
+    {{ term_checkboxes(taxonomies, selected_terms, can_add=user.has_role('manager')) }}
   </div>
   <div class="card">
     {{ people_list("approvers", "Approvers", "(at least one person other than you)", users | rejectattr('email', 'equalto', user.email) | list, form.approvers) }}

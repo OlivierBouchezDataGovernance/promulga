@@ -249,7 +249,7 @@ async def new_document(request: Request, title: str = Form(""), doc_type: str = 
         doc = workflow.create_document(
             db, user, title=title, doc_type=doc_type, summary=summary, owner_email=owner,
             reviewer_emails=_people(reviewers, reviewers_pick), approver_emails=_people(approvers, approvers_pick),
-            term_ids=_int_list(terms), file=upload, review_months=_months(review_months),
+            term_ids=_int_list(terms) + await _typed_tags(request, db, user), file=upload, review_months=_months(review_months),
             ack_required=ack_required == "1", classification=classification, keywords=keywords,
             readers=_people(readers, readers_pick), parent_id=_parent_id(parent_id),
             chatbot=chatbot, website=website)
@@ -319,7 +319,7 @@ async def upload_documents(request: Request, files: list[UploadFile] = File([]),
         uploads = [u for u in [await _read_upload(f) for f in files] if u is not None]
         out = workflow.upload_for_approval(
             db, user, uploads, doc_type=doc_type, approver_emails=approvers_pick, summary=summary,
-            term_ids=_int_list(terms), classification=classification, keywords=keywords, readers=readers_pick,
+            term_ids=_int_list(terms) + await _typed_tags(request, db, user), classification=classification, keywords=keywords, readers=readers_pick,
             chatbot=chatbot, website=website)
         db.commit()
     except (workflow.WorkflowError, accounts.AccountError, ValueError) as exc:
@@ -357,7 +357,7 @@ def edit_document_form(doc_id: int, request: Request, db: Session = Depends(get_
 
 
 @router.post("/documents/{doc_id}/edit", dependencies=[Depends(csrf_protect)])
-def edit_document(doc_id: int, request: Request, title: str = Form(""), summary: str = Form(""),
+async def edit_document(doc_id: int, request: Request, title: str = Form(""), summary: str = Form(""),
                   owner: str = Form(""), reviewers: str = Form(""), approvers: str = Form(""),
                   terms: list[str] = Form([]), review_months: str = Form(""), ack_required: str = Form(""),
                   classification: str = Form("internal"), keywords: str = Form(""), readers: str = Form(""),
@@ -370,7 +370,7 @@ def edit_document(doc_id: int, request: Request, title: str = Form(""), summary:
     owner = _owner(owner, owner_other)
     try:
         lowered = workflow.update_metadata(
-            db, user, doc, title=title, summary=summary, term_ids=_int_list(terms),
+            db, user, doc, title=title, summary=summary, term_ids=_int_list(terms) + await _typed_tags(request, db, user),
             review_months=_months(review_months), ack_required=ack_required == "1",
             classification=classification, keywords=keywords, readers=_people(readers, readers_pick),
             parent_id=_parent_id(parent_id), chatbot=chatbot, website=website)
@@ -886,15 +886,44 @@ def create_term(tax_id: int, request: Request, name: str = Form(""), parent_id: 
         flash(request, "The term name is required.", "error")
         return redirect("/admin/taxonomies")
     parent = db.get(Term, int(parent_id)) if parent_id.isdigit() else None
+    _new_term(db, tax, name, description, code, parent)
+    db.commit()
+    return redirect(f"/admin/taxonomies#tax-{tax.id}")
+
+
+def _new_term(db: Session, tax: Taxonomy, name: str, description: str = "", code: str = "",
+              parent: Term | None = None) -> Term:
     slug, n = _slug(name), 1
     while db.query(Term).filter_by(taxonomy_id=tax.id, slug=slug).first():
         n += 1
         slug = f"{_slug(name)}-{n}"
-    db.add(Term(taxonomy=tax, name=name.strip()[:150], slug=slug, description=description.strip(),
-                code=_code(code),
-                parent_id=parent.id if parent and parent.taxonomy_id == tax.id else None))
-    db.commit()
-    return redirect(f"/admin/taxonomies#tax-{tax.id}")
+    term = Term(taxonomy=tax, name=name.strip()[:150], slug=slug, description=description.strip(), code=_code(code),
+                parent_id=parent.id if parent and parent.taxonomy_id == tax.id else None)
+    db.add(term)
+    db.flush()
+    return term
+
+
+async def _typed_tags(request: Request, db: Session, user: User) -> list[int]:
+    """Tags typed in the 'New tags' field of a taxonomy (document forms): created if new (Document Managers only),
+    an existing tag of the same name is reused. Returns their ids, to be ticked."""
+    ids: list[int] = []
+    for key, value in (await request.form()).multi_items():
+        names = [n.strip()[:150] for n in re.split(r"[,;]", str(value)) if n.strip()] if key.startswith("new_tags_") else []
+        if not names:
+            continue
+        if not workflow.is_manager(user):
+            raise workflow.WorkflowError("Only a Document Manager can add tags.")
+        tax = db.get(Taxonomy, int(key[9:])) if key[9:].isdigit() else None
+        if tax is None:
+            raise workflow.WorkflowError("Unknown taxonomy.")
+        for name in names:
+            term = next((t for t in tax.terms if t.name.lower() == name.lower()), None)
+            if term is None:
+                term = _new_term(db, tax, name)
+                workflow.log_admin(db, user, "Tag created", f"{tax.name}: {term.name}")
+            ids.append(term.id)
+    return ids
 
 
 def _code(value: str) -> str:

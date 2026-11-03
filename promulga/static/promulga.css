@@ -172,6 +172,7 @@ a.tag:hover { border-color: var(--c-accent); text-decoration: none; }
 
 /* ---------- Tables ---------- */
 .table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.table-wrap td input[type="text"] { min-width: 9rem; }  /* editable tables (tags): names stay readable on narrow screens */
 table { border-collapse: collapse; width: 100%; font-size: .88rem; }
 th, td { text-align: left; padding: .6rem .75rem; border-bottom: 1px solid var(--border); vertical-align: top; }
 th { background: var(--surface-alt); font-size: .7rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted-dark); font-weight: 600; }
