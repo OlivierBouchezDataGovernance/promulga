@@ -18,10 +18,14 @@
     <div class="nav-links">
       {% set path = request.url.path %}
       <a href="/admin" class="{{ 'active' if path == '/admin' }}">{{ _("My tasks") }}</a>
-      <a href="/admin/documents" class="{{ 'active' if path.startswith('/admin/documents') and path != '/admin/documents/new' }}">{{ _("Register") }}</a>
+      <a href="/admin/documents" class="{{ 'active' if path.startswith('/admin/documents') and path not in ('/admin/documents/new', '/admin/documents/upload') }}">{{ _("Register") }}</a>
+      {% if site.doc_types | selectattr('workflow', 'equalto', 'approval') | list %}
+        <a href="/admin/documents/upload" class="{{ 'active' if path == '/admin/documents/upload' }}">{{ _("Upload") }}</a>
+      {% endif %}
       {% if user.has_role('manager') %}
         <a href="/admin/documents/new" class="{{ 'active' if path == '/admin/documents/new' }}">{{ _("+ New document") }}</a>
         <a href="/admin/taxonomies" class="{{ 'active' if path.startswith('/admin/taxonomies') }}">{{ _("Tags") }}</a>
+        <a href="/admin/groups" class="{{ 'active' if path.startswith('/admin/groups') }}">{{ _("Groups") }}</a>
         <a href="/admin/indicators" class="{{ 'active' if path.startswith('/admin/indicators') }}">{{ _("Indicators") }}</a>
         <a href="/admin/audit" class="{{ 'active' if path.startswith('/admin/audit') }}">{{ _("Audit log") }}</a>
       {% endif %}

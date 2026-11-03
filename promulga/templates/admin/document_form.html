@@ -3,7 +3,7 @@
 {# A participant field: the existing users with a check box each (filter, select all), plus free e-mails. #}
 {% macro picker(name, label, hint, people, value) %}
   {% set chosen = (value or '').replace(';', ',').split(',') | map('trim') | map('lower') | select | list %}
-  {% set known = people | map(attribute='email') | map('lower') | list %}
+  {% set known = (people | map(attribute='email') | map('lower') | list) + ((groups or []) | map(attribute='token') | list) %}
   <fieldset class="picker" data-picker="{{ name }}">
     <legend>{{ label }} <span class="hint">{{ hint }}</span></legend>
     <div class="picker-tools">
@@ -18,8 +18,13 @@
         <input type="checkbox" name="{{ name }}_pick" value="{{ u.email }}" {{ 'checked' if u.email | lower in chosen }}>
         {{ u.display }} <span class="muted small">{{ u.email }}</span></label>
       {% else %}<p class="small muted">No account yet: type the e-mail addresses below.</p>{% endfor %}
+      {% for g in groups or [] %}
+      <label class="check picker-item" data-text="{{ (g.token ~ ' ' ~ g.description) | lower }}">
+        <input type="checkbox" name="{{ name }}_pick" value="{{ g.token }}" {{ 'checked' if g.token in chosen }}>
+        <strong>{{ g.token }}</strong> <span class="muted small">group, {{ g.active_members | length }} member(s){{ ', one member is enough' if g.any_member }}</span></label>
+      {% endfor %}
     </div>
-    <label class="small" for="{{ name }}">Other people <span class="hint">(e-mails separated by commas; they are invited)</span></label>
+    <label class="small" for="{{ name }}">Other people <span class="hint">(e-mails or @groups, separated by commas; new people are invited)</span></label>
     <input type="text" id="{{ name }}" name="{{ name }}" value="{{ chosen | reject('in', known) | join(', ') }}">
   </fieldset>
 {% endmacro %}
@@ -100,7 +105,7 @@
   <div>
     <h3>Tags</h3>
     <p class="small muted">They drive the navigation of the portal.</p>
-    {{ term_checkboxes(taxonomies, selected_terms) }}
+    {{ term_checkboxes(taxonomies, selected_terms, can_add=user.has_role('manager')) }}
   </div>
 </form>
 </div></section>

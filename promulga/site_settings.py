@@ -1,8 +1,8 @@
 """Settings the administrator edits in the web interface (stored as JSON in the DB).
 
 Look and feel (name, colours, logo, banner, footer), portal access, document
-types, and the deadlines and alerts of the workflow. The workflow itself is
-fixed; only its timing is configurable.
+types, and the deadlines and alerts of the workflow. The workflow has two fixed
+profiles, chosen per document type (Full, or Approval only); only its timing is configurable.
 """
 
 from __future__ import annotations
@@ -43,6 +43,7 @@ DEFAULTS: dict[str, Any] = {
         {"name": "Work instruction", "prefix": "WIN", "icon": "wrench"},
         {"name": "Tutorial", "prefix": "TUT", "icon": "graduation-cap"},
         {"name": "Reference", "prefix": "REF", "icon": "library"},
+        {"name": "Knowledge", "prefix": "KNW", "icon": "book-open", "workflow": "approval"},
     ],
     "template_asset": "",           # optional .docx copied as first revision of new documents
     "type_templates": {},           # {document type name: asset}: template of that type (wins over template_asset)
@@ -133,6 +134,26 @@ def set_many(db: Session, values: dict[str, Any]) -> None:
             db.add(Setting(key=key, value=encoded))
         else:
             row.value = encoded
+
+
+# Workflow profiles of a document type.
+#   full:     Draft > Review > Revision > Approval > Published (governance documents)
+#   approval: uploaded > Approval > Published (sources of a chatbot, reference material); a rejected
+#             document goes back to its owner, who uploads a corrected file
+WORKFLOW_FULL, WORKFLOW_APPROVAL = "full", "approval"
+WORKFLOWS = {WORKFLOW_FULL: "Full", WORKFLOW_APPROVAL: "Approval only"}
+
+
+def doc_type_workflow(settings: dict[str, Any], doc_type: str) -> str:
+    for t in settings["doc_types"]:
+        if t["name"] == doc_type:
+            return t.get("workflow") if t.get("workflow") in WORKFLOWS else WORKFLOW_FULL
+    return WORKFLOW_FULL
+
+
+def approval_types(settings: dict[str, Any]) -> list[str]:
+    """Names of the document types with the Approval only profile."""
+    return [t["name"] for t in settings["doc_types"] if t.get("workflow") == WORKFLOW_APPROVAL]
 
 
 def doc_type_prefix(settings: dict[str, Any], doc_type: str) -> str:

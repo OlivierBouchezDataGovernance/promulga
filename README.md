@@ -56,6 +56,23 @@ Two web sites in one small application:
 - **E-mails** to the person who must act, with links; without an SMTP server
   everything is readable in the *Outbox* (handy for demos).
 
+New in 0.5 (in progress):
+
+- **Two workflows, chosen per document type.** Full (Draft > Review >
+  Revision > Approval > Published) for governance documents, or Approval
+  only (upload > approval > publication) for reference material such as the
+  sources of a chatbot. See [docs/WORKFLOWS.md](docs/WORKFLOWS.md).
+- **Upload for approval.** Authors drop 1 to 20 .docx, .pdf, .md or .txt
+  files: one document per file, sent to its approvers at once, one e-mail
+  for the batch, duplicates flagged. The file is published as uploaded and
+  its clean text (headings kept) is stored for search and chatbots.
+- **Groups** (local, or from the single sign-on) as readers, reviewers and
+  approvers (`@name`), with the option "one member is enough".
+- **Approve several documents at once** from My tasks.
+- **Who may read, in plain words** on the document page: Public, Internal or
+  Restricted. Named readers may read Limited and Confidential documents.
+- Roles shown as Reader, Author, Document Manager and Administrator.
+
 New in 0.4.3:
 
 - **Distribution and reading on the document page.** The owner of a document

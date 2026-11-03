@@ -1,0 +1,52 @@
+{% extends "admin/base.html" %}
+{% block title %}Groups - {{ site.site_name }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="container">
+  <h1>Groups</h1>
+  <p class="muted small">Name a group as reader, reviewer or approver of a document with <strong>@name</strong>. Its active
+    members become participants; with <em>one member is enough</em>, the first member who reviews or approves does it
+    for the whole group. Groups from the single sign-on take their members from the directory at each sign-in.</p>
+</div></div>
+<section class="section"><div class="container">
+  {% for g in groups %}
+  <details class="card" style="margin-bottom:1rem">
+    <summary><strong>{{ g.token }}</strong> <span class="small muted">{{ 'single sign-on' if g.source == 'sso' else 'local' }} ·
+      {{ g.active_members | length }} member(s){{ ' · one member is enough' if g.any_member }}{% if g.description %} · {{ g.description }}{% endif %}</span></summary>
+    <form method="post" action="/admin/groups">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="group_id" value="{{ g.id }}">
+      <input type="hidden" name="name" value="{{ g.name }}">
+      <label for="d{{ g.id }}">Description</label>
+      <input id="d{{ g.id }}" type="text" name="description" maxlength="500" value="{{ g.description }}">
+      <label class="check"><input type="checkbox" name="any_member" value="1" {{ 'checked' if g.any_member }}> One member is enough (reviews and approvals)</label>
+      {% if g.source == 'sso' %}
+      <p class="small">Members (from the directory): {% for u in g.members %}{{ u.display }}{{ ', ' if not loop.last }}{% else %}none yet{% endfor %}</p>
+      {% else %}
+      <fieldset class="picker"><legend>Members</legend><div class="picker-list">
+        {% for u in all_users %}<label class="check picker-item"><input type="checkbox" name="members" value="{{ u.id }}" {{ 'checked' if u in g.members }}>
+          {{ u.display }} <span class="muted small">{{ u.email }}</span></label>{% endfor %}
+      </div></fieldset>
+      {% endif %}
+      <p><button type="submit" class="btn btn-sm">Save</button>
+        {% if g.source != 'sso' %}<button type="submit" name="delete" value="1" class="btn btn-sm btn-outline">Delete</button>{% endif %}</p>
+    </form>
+  </details>
+  {% else %}<p class="muted">No group yet.</p>{% endfor %}
+  <div class="card">
+    <h2>New group</h2>
+    <form method="post" action="/admin/groups">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label for="name">Name <span class="hint">(lower case, e.g. dpo-team; used as @name)</span></label>
+      <input id="name" type="text" name="name" required maxlength="50" pattern="@?[a-z0-9][a-z0-9._\-]{1,49}">
+      <label for="description">Description</label>
+      <input id="description" type="text" name="description" maxlength="500">
+      <label class="check"><input type="checkbox" name="any_member" value="1"> One member is enough (reviews and approvals)</label>
+      <fieldset class="picker"><legend>Members</legend><div class="picker-list">
+        {% for u in all_users %}<label class="check picker-item"><input type="checkbox" name="members" value="{{ u.id }}">
+          {{ u.display }} <span class="muted small">{{ u.email }}</span></label>{% endfor %}
+      </div></fieldset>
+      <p><button type="submit" class="btn">Create the group</button></p>
+    </form>
+  </div>
+</div></section>
+{% endblock %}

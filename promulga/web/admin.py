@@ -25,9 +25,9 @@ from .. import (accounts, docx_meta, export, icons, insights, mailer, naming, on
 from ..config import get_config
 from ..db import get_db
 from ..models import (
-    ACTIVE_STATUSES, APPROVAL, REVIEW, ROLES, STATUSES, TRANSLATION_LANGUAGES, ApiToken, Assignment, Comment,
-    Document, Event, ExternalReference, OutboxMail, PasskeyCredential, Publication, Revision, Taxonomy, Term,
-    Translation, User, WebhookDelivery,
+    ACTIVE_STATUSES, APPROVAL, GROUP_LOCAL, GROUP_SSO, REVIEW, ROLES, STATUSES, TRANSLATION_LANGUAGES, ApiToken,
+    Assignment, Comment, Document, Event, ExternalReference, Group, OutboxMail, PasskeyCredential, Publication,
+    Revision, Taxonomy, Term, Translation, User, WebhookDelivery,
 )
 from ..security import check_password_strength, hash_password, verify_password
 from .deps import (
@@ -78,8 +78,8 @@ def _get_doc(db: Session, doc_id: int, user: User) -> Document:
 
 
 def _people(text: str, picks: list[str] | None) -> list[str]:
-    """E-mails of a participant field: the users checked in the list, then the addresses typed."""
-    return list(dict.fromkeys([p.strip().lower() for p in picks or [] if p.strip()] + accounts.parse_emails(text)))
+    """E-mails of a participant field: the users (and '@groups') checked in the list, then what was typed."""
+    return list(dict.fromkeys([p.strip().lower() for p in picks or [] if p.strip()] + accounts.parse_people(text)))
 
 
 def _owner(choice: str, other: str) -> str:
@@ -88,7 +88,8 @@ def _owner(choice: str, other: str) -> str:
 
 def _form_users(db: Session) -> dict:
     active = db.query(User).filter(User.active.is_(True)).order_by(User.name, User.email).all()
-    return {"users": [u for u in active if u.role != "viewer"], "all_users": active}
+    groups = [g for g in db.query(Group).order_by(Group.name).all() if g.active_members]
+    return {"users": [u for u in active if u.role != "viewer"], "all_users": active, "groups": groups}
 
 
 PENDING = "pending"   # files received with a creation form that was refused, kept for the next attempt
@@ -238,7 +239,7 @@ async def new_document(request: Request, title: str = Form(""), doc_type: str = 
         doc = workflow.create_document(
             db, user, title=title, doc_type=doc_type, summary=summary, owner_email=owner,
             reviewer_emails=_people(reviewers, reviewers_pick), approver_emails=_people(approvers, approvers_pick),
-            term_ids=_int_list(terms), file=upload, review_months=_months(review_months),
+            term_ids=_int_list(terms) + await _typed_tags(request, db, user), file=upload, review_months=_months(review_months),
             ack_required=ack_required == "1", classification=classification, keywords=keywords,
             readers=_people(readers, readers_pick), parent_id=_parent_id(parent_id))
         db.commit()
@@ -265,13 +266,73 @@ async def new_document(request: Request, title: str = Form(""), doc_type: str = 
     return redirect(f"/admin/documents/{doc.id}")
 
 
+@router.post("/approvals", dependencies=[Depends(csrf_protect)])
+def decide_approvals(request: Request, doc_ids: list[str] = Form([]), decision: str = Form(""), note: str = Form(""),
+                     db: Session = Depends(get_db), user: User = Depends(require_contributor)):
+    docs = [_get_doc(db, i, user) for i in _int_list(doc_ids)]
+    if not docs:
+        flash(request, "Tick at least one document.", "error")
+        return redirect("/admin")
+    try:
+        done, errors = workflow.decide_many(db, user, docs, decision, note)
+        db.commit()
+    except workflow.WorkflowError as exc:
+        db.rollback()
+        flash(request, str(exc), "error")
+        return redirect("/admin")
+    if done:
+        flash(request, f"{'Approved' if decision == 'approve' else 'Rejected'}: {', '.join(done)}.", "success")
+    for e in errors:
+        flash(request, e, "error")
+    return redirect("/admin")
+
+
+@router.get("/documents/upload")
+def upload_form(request: Request, db: Session = Depends(get_db), user: User = Depends(require_contributor)):
+    site = site_settings.get_all(db)
+    return render(request, db, "admin/upload.html", user=user, taxonomies=_taxonomies(db), selected_terms=set(),
+                  types=site_settings.approval_types(site), max_files=workflow.UPLOAD_MAX_FILES,
+                  form={"approvers": [e for e in workflow.default_approvers(db, site) if e != user.email]},
+                  **_form_users(db))
+
+
+@router.post("/documents/upload", dependencies=[Depends(csrf_protect)])
+async def upload_documents(request: Request, files: list[UploadFile] = File([]), doc_type: str = Form(""),
+                           summary: str = Form(""), classification: str = Form("internal"),
+                           keywords: str = Form(""), terms: list[str] = Form([]),
+                           approvers_pick: list[str] = Form([]), readers_pick: list[str] = Form([]),
+                           db: Session = Depends(get_db), user: User = Depends(require_contributor)):
+    try:
+        uploads = [u for u in [await _read_upload(f) for f in files] if u is not None]
+        out = workflow.upload_for_approval(
+            db, user, uploads, doc_type=doc_type, approver_emails=approvers_pick, summary=summary,
+            term_ids=_int_list(terms) + await _typed_tags(request, db, user), classification=classification, keywords=keywords, readers=readers_pick)
+        db.commit()
+    except (workflow.WorkflowError, accounts.AccountError, ValueError) as exc:
+        db.rollback()
+        flash(request, str(exc), "error")
+        site = site_settings.get_all(db)
+        return render(request, db, "admin/upload.html", user=user, taxonomies=_taxonomies(db),
+                      selected_terms=set(_int_list(terms)), types=site_settings.approval_types(site),
+                      max_files=workflow.UPLOAD_MAX_FILES, status_code=400,
+                      form={"doc_type": doc_type, "summary": summary, "classification": classification,
+                            "keywords": keywords, "approvers": approvers_pick, "readers": readers_pick},
+                      messages=request.session.pop("flash", []), **_form_users(db))
+    refs = ", ".join(d.ref for d, _ in out)
+    flash(request, f"{len(out)} document(s) sent for approval: {refs}. The approvers received one e-mail.", "success")
+    for doc, same in out:
+        if same:
+            flash(request, f"{doc.ref}: the same file is already in {', '.join(same)}.", "warning")
+    return redirect("/admin/documents?mine=true")
+
+
 @router.get("/documents/{doc_id}/edit")
 def edit_document_form(doc_id: int, request: Request, db: Session = Depends(get_db),
                        user: User = Depends(require_manager)):
     doc = _get_doc(db, doc_id, user)
     form = {"title": doc.title, "doc_type": doc.doc_type, "summary": doc.summary, "owner": doc.owner.email,
-            "reviewers": ", ".join(a.user.email for a in doc.reviewers),
-            "approvers": ", ".join(a.user.email for a in doc.approvers),
+            "reviewers": ", ".join(workflow.participant_tokens(doc, "reviewer")),
+            "approvers": ", ".join(workflow.participant_tokens(doc, "approver")),
             "review_months": "" if doc.review_months is None else doc.review_months, "ack_required": doc.ack_required,
             "classification": doc.classification, "keywords": doc.keywords, "readers": doc.readers,
             "parent_id": str(doc.parent_id or "")}
@@ -281,7 +342,7 @@ def edit_document_form(doc_id: int, request: Request, db: Session = Depends(get_
 
 
 @router.post("/documents/{doc_id}/edit", dependencies=[Depends(csrf_protect)])
-def edit_document(doc_id: int, request: Request, title: str = Form(""), summary: str = Form(""),
+async def edit_document(doc_id: int, request: Request, title: str = Form(""), summary: str = Form(""),
                   owner: str = Form(""), reviewers: str = Form(""), approvers: str = Form(""),
                   terms: list[str] = Form([]), review_months: str = Form(""), ack_required: str = Form(""),
                   classification: str = Form("internal"), keywords: str = Form(""), readers: str = Form(""),
@@ -292,12 +353,14 @@ def edit_document(doc_id: int, request: Request, title: str = Form(""), summary:
     doc = _get_doc(db, doc_id, user)
     owner = _owner(owner, owner_other)
     try:
-        workflow.update_metadata(db, user, doc, title=title, summary=summary, term_ids=_int_list(terms),
+        workflow.update_metadata(db, user, doc, title=title, summary=summary,
+                                 term_ids=_int_list(terms) + await _typed_tags(request, db, user),
                                  review_months=_months(review_months), ack_required=ack_required == "1",
                                  classification=classification, keywords=keywords,
                                  readers=_people(readers, readers_pick), parent_id=_parent_id(parent_id))
         new_people = (owner.strip().lower(), _people(reviewers, reviewers_pick), _people(approvers, approvers_pick))
-        old_people = (doc.owner.email, [a.user.email for a in doc.reviewers], [a.user.email for a in doc.approvers])
+        old_people = (doc.owner.email, workflow.participant_tokens(doc, "reviewer"),
+                      workflow.participant_tokens(doc, "approver"))
         if new_people != old_people:
             workflow.update_participants(db, user, doc, owner_email=owner, reviewer_emails=new_people[1],
                                          approver_emails=new_people[2])
@@ -330,6 +393,8 @@ def document_page(doc_id: int, request: Request, db: Session = Depends(get_db),
     dist = workflow.distribution(db, doc) if workflow.follows_distribution(doc, user) else None
     linked = {r.id for r in doc.references}
     return render(request, db, "admin/document.html", user=user, doc=doc, events=events, actions=actions,
+                  workflow_label=workflow.workflow_label(doc),
+                  audience=workflow.audience(doc, site_settings.get_all(db)),
                   has_task=bool(actions - {"comment", "reply", "edit", "annex"}), max_mb=get_config().max_upload_mb,
                   handles_file=workflow.handles_file(doc, user), remarks=workflow.remarks(doc),
                   undecided=workflow.undecided(doc), languages=TRANSLATION_LANGUAGES,
@@ -712,6 +777,50 @@ def reinvite(user_id: int, request: Request, db: Session = Depends(get_db), user
 # Taxonomies and terms (Document Managers)
 # ---------------------------------------------------------------------------
 
+@router.get("/groups")
+def groups_page(request: Request, db: Session = Depends(get_db), user: User = Depends(require_manager)):
+    groups = db.query(Group).order_by(Group.name).all()
+    users = db.query(User).filter(User.active.is_(True)).order_by(User.name, User.email).all()
+    return render(request, db, "admin/groups.html", user=user, groups=groups, all_users=users)
+
+
+@router.post("/groups", dependencies=[Depends(csrf_protect)])
+def save_group(request: Request, group_id: str = Form(""), name: str = Form(""), description: str = Form(""),
+               any_member: str = Form(""), members: list[str] = Form([]), delete: str = Form(""),
+               db: Session = Depends(get_db), user: User = Depends(require_manager)):
+    group = db.get(Group, int(group_id)) if group_id.isdigit() else None
+    name = name.strip().lstrip("@").lower()
+    if delete == "1" and group is not None:
+        if group.source == GROUP_SSO:
+            flash(request, "A group from the single sign-on is managed in the directory.", "error")
+            return redirect("/admin/groups")
+        workflow.log_admin(db, user, "Group deleted", group.token)
+        db.delete(group)
+        db.commit()
+        flash(request, f"Group @{name} deleted. Documents keep its members as participants.", "success")
+        return redirect("/admin/groups")
+    if group is None:
+        if not accounts.GROUP_NAME.fullmatch(name):
+            flash(request, "Group name: 2 to 50 lower-case letters, digits, dots, dashes or underscores.", "error")
+            return redirect("/admin/groups")
+        if db.query(Group).filter_by(name=name).first() is not None:
+            flash(request, f"The group @{name} already exists.", "error")
+            return redirect("/admin/groups")
+        group = Group(name=name, source=GROUP_LOCAL)
+        db.add(group)
+    group.description = description.strip()[:500]
+    group.any_member = any_member == "1"
+    if group.source == GROUP_LOCAL:        # SSO groups take their members from the directory
+        ids = _int_list(members)
+        group.members = db.query(User).filter(User.id.in_(ids or [0])).all()
+    db.flush()
+    workflow.log_admin(db, user, "Group saved", f"{group.token}: {len(group.members)} member(s)"
+                       + (", one member is enough" if group.any_member else ""))
+    db.commit()
+    flash(request, f"Group {group.token} saved.", "success")
+    return redirect("/admin/groups")
+
+
 @router.get("/taxonomies")
 def taxonomies_page(request: Request, db: Session = Depends(get_db), user: User = Depends(require_manager)):
     return render(request, db, "admin/taxonomies.html", user=user, taxonomies=_taxonomies(db),
@@ -760,15 +869,44 @@ def create_term(tax_id: int, request: Request, name: str = Form(""), parent_id: 
         flash(request, "The term name is required.", "error")
         return redirect("/admin/taxonomies")
     parent = db.get(Term, int(parent_id)) if parent_id.isdigit() else None
+    _new_term(db, tax, name, description, code, parent)
+    db.commit()
+    return redirect(f"/admin/taxonomies#tax-{tax.id}")
+
+
+def _new_term(db: Session, tax: Taxonomy, name: str, description: str = "", code: str = "",
+              parent: Term | None = None) -> Term:
     slug, n = _slug(name), 1
     while db.query(Term).filter_by(taxonomy_id=tax.id, slug=slug).first():
         n += 1
         slug = f"{_slug(name)}-{n}"
-    db.add(Term(taxonomy=tax, name=name.strip()[:150], slug=slug, description=description.strip(),
-                code=_code(code),
-                parent_id=parent.id if parent and parent.taxonomy_id == tax.id else None))
-    db.commit()
-    return redirect(f"/admin/taxonomies#tax-{tax.id}")
+    term = Term(taxonomy=tax, name=name.strip()[:150], slug=slug, description=description.strip(), code=_code(code),
+                parent_id=parent.id if parent and parent.taxonomy_id == tax.id else None)
+    db.add(term)
+    db.flush()
+    return term
+
+
+async def _typed_tags(request: Request, db: Session, user: User) -> list[int]:
+    """Tags typed in the 'New tags' field of a taxonomy (document forms): created if new (Document Managers only),
+    an existing tag of the same name is reused. Returns their ids, to be ticked."""
+    ids: list[int] = []
+    for key, value in (await request.form()).multi_items():
+        names = [n.strip()[:150] for n in re.split(r"[,;]", str(value)) if n.strip()] if key.startswith("new_tags_") else []
+        if not names:
+            continue
+        if not workflow.is_manager(user):
+            raise workflow.WorkflowError("Only a Document Manager can add tags.")
+        tax = db.get(Taxonomy, int(key[9:])) if key[9:].isdigit() else None
+        if tax is None:
+            raise workflow.WorkflowError("Unknown taxonomy.")
+        for name in names:
+            term = next((t for t in tax.terms if t.name.lower() == name.lower()), None)
+            if term is None:
+                term = _new_term(db, tax, name)
+                workflow.log_admin(db, user, "Tag created", f"{tax.name}: {term.name}")
+            ids.append(term.id)
+    return ids
 
 
 def _code(value: str) -> str:
@@ -877,9 +1015,14 @@ async def save_workflow(request: Request, draft_days: int = Form(28), review_day
         parts = [p.strip() for p in line.split("=")]
         if len(parts) >= 2 and parts[0] and re.fullmatch(r"[A-Z0-9]{2,8}", parts[1].upper()):
             icon = parts[2] if len(parts) > 2 and parts[2] in icons.ICONS else icons.DEFAULT_ICON
-            types.append({"name": parts[0][:50], "prefix": parts[1].upper(), "icon": icon})
+            kind = parts[3].lower() if len(parts) > 3 else ""
+            entry = {"name": parts[0][:50], "prefix": parts[1].upper(), "icon": icon}
+            if kind == site_settings.WORKFLOW_APPROVAL:
+                entry["workflow"] = site_settings.WORKFLOW_APPROVAL
+            types.append(entry)
     if not types:
-        flash(request, "Give at least one document type, one per line, as 'Name=PREFIX=icon'.", "error")
+        flash(request, "Give at least one document type, one per line, as 'Name=PREFIX=icon' "
+                       "(add '=approval' for the Approval only workflow).", "error")
         return redirect("/admin/settings#workflow")
     days = [draft_days, review_days, revision_days, approval_days]
     if any(d < 1 or d > 365 for d in days):
