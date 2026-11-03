@@ -5,7 +5,8 @@ Admin > API tokens (only its hash is stored). Working files and comments are
 never exposed; published PDFs are linked through the portal.
 
     GET /api/v1/documents                 all documents (metadata, stage, versions);
-                                          filters: status, type, tag, chatbot, website (no, internal, public)
+                                          filters: status, type, tag, chatbot, website (no, internal, public),
+                                          domain, linked (FQN of an OpenMetadata glossary term or data product)
     GET /api/v1/documents/{ref}           one document, with its publications
     GET /api/v1/taxonomies                taxonomies and tags (with codes)
     GET /api/v1/corpus                    knowledge feed of a chatbot (PROM-65), see corpus()
@@ -21,12 +22,15 @@ import hashlib
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Header, HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 
-from .. import naming, site_settings
+from .. import catalog, naming, site_settings
 from ..config import get_config
 from ..db import get_db
-from ..models import DISTRIBUTION_ORDER, ApiToken, ChannelLog, Document, Taxonomy, max_distribution, utcnow
+from ..models import (
+    DISTRIBUTION_ORDER, ApiToken, CatalogLink, ChannelLog, Document, Taxonomy, max_distribution, utcnow,
+)
 
 router = APIRouter(prefix="/api/v1")
 
@@ -80,6 +84,11 @@ def _doc(d: Document, site: dict, full: bool = False) -> dict:
         "approvers": [a.user.email for a in d.approvers],
         "tags": [{"taxonomy": t.taxonomy.slug, "name": t.name, "code": t.code} for t in d.terms],
         "classification": d.classification, "chatbot": d.chatbot, "website": d.website, "keywords": [k.strip() for k in d.keywords.split(",") if k.strip()],
+        "domain": d.domain or None,
+        "parent": d.parent.ref if d.parent and not d.parent.is_strict else None,
+        "catalog_links": [{"kind": link.kind, "fqn": link.fqn, "label": link.label,
+                           "url": catalog.entity_url(link.kind, link.fqn) or None} for link in d.catalog_links],
+        "review_confirmed": d.review_confirmed_at.isoformat() if d.review_confirmed_at else None,
         "portal_url": f"{base}/d/{d.ref}" if d.current_version else None,
     }
     if full:
@@ -94,7 +103,7 @@ def _doc(d: Document, site: dict, full: bool = False) -> dict:
 
 @router.get("/documents")
 def list_documents(status: str = "", type: str = "", tag: str = "", chatbot: str = "", website: str = "",
-                   db: Session = Depends(get_db), _client: ApiToken = Depends(catalogue_client)):
+                   domain: str = "", linked: str = "", db: Session = Depends(get_db), _client: ApiToken = Depends(catalogue_client)):
     site = site_settings.get_all(db)
     q = db.query(Document).options(selectinload(Document.terms), selectinload(Document.assignments))
     if status:
@@ -105,6 +114,10 @@ def list_documents(status: str = "", type: str = "", tag: str = "", chatbot: str
         q = q.filter(Document.chatbot == chatbot)
     if website:
         q = q.filter(Document.website == website)
+    if domain:
+        q = q.filter(func.lower(Document.domain) == domain.strip().lower())
+    if linked:
+        q = q.filter(Document.catalog_links.any(CatalogLink.fqn == linked.strip()))
     docs = [d for d in q.order_by(Document.ref).all() if not d.is_strict]   # Audit documents are not exposed
     if tag:
         docs = [d for d in docs if any(t.slug == tag.lower() or t.name.lower() == tag.lower() for t in d.terms)]
@@ -160,7 +173,7 @@ def corpus(audience: str = "", since: str = "", db: Session = Depends(get_db),
             "version": d.current_version, "published": d.published_at.isoformat() if d.published_at else None,
             "classification": d.classification, "chatbot": d.feed_level,
             "tags": [{"taxonomy": t.taxonomy.slug, "name": t.name, "code": t.code} for t in d.terms],
-            "keywords": [k.strip() for k in d.keywords.split(",") if k.strip()],
+            "keywords": [k.strip() for k in d.keywords.split(",") if k.strip()], "domain": d.domain or None,
             "portal_url": f"{base}/d/{d.ref}",
             "pdf_url": f"{base}/d/{d.ref}/v{d.current_version}.pdf",
             "sha256": pub.sha256 if pub else None, "text": (pub.text or "") if pub else "",

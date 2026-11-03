@@ -17,7 +17,7 @@ chmod 600 .env
 
 mkdir -p secrets
 chmod 700 secrets
-for name in smtp_password github_token oidc_client_secret onlyoffice_jwt_secret signing_cert_password; do
+for name in smtp_password github_token oidc_client_secret onlyoffice_jwt_secret signing_cert_password openmetadata_token; do
   [ -f "secrets/$name" ] || : > "secrets/$name"
 done
 if [ ! -s secrets/onlyoffice_jwt_secret ]; then

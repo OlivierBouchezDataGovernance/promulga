@@ -119,6 +119,53 @@ def extract_text(pdf_bytes: bytes, max_chars: int = 200_000) -> str:
         return ""
 
 
+# Annotations a reader writes in a PDF (Acrobat Reader, Edge, Preview...). Popups are only the window of
+# another annotation; links, widgets (form fields) and the like are not remarks.
+REMARK_ANNOTATIONS = {"/Text", "/FreeText", "/Highlight", "/Underline", "/StrikeOut", "/Squiggly", "/Caret",
+                      "/Square", "/Circle", "/Line", "/Polygon", "/PolyLine", "/Ink", "/Stamp", "/FileAttachment"}
+
+
+def annotations(pdf_bytes: bytes) -> list[dict]:
+    """The remarks written as annotations in a PDF: [{key, page, author, text, kind, reply_to, date}], in page
+    order. `key` identifies the annotation (its /NM, else page and position); `reply_to` is the key of the
+    annotation it answers (/IRT), or ''. Annotations without text are skipped, except their replies' parents.
+    Raises ValueError when the file is not a readable PDF."""
+    try:
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        pages = list(reader.pages)
+    except Exception as exc:
+        raise ValueError("This file is not a readable PDF.") from exc
+    found, keys = [], {}
+    for number, page in enumerate(pages, start=1):
+        try:
+            annots = page.get("/Annots") or []
+            annots = annots.get_object() if hasattr(annots, "get_object") else annots
+        except Exception:
+            continue
+        for index, ref in enumerate(annots):
+            try:
+                annot = ref.get_object()
+            except Exception:
+                continue
+            kind = str(annot.get("/Subtype", ""))
+            if kind not in REMARK_ANNOTATIONS:
+                continue
+            key = str(annot.get("/NM") or f"p{number}-{index}")
+            if hasattr(ref, "idnum"):
+                keys[(ref.idnum, ref.generation)] = key
+            irt = annot.get("/IRT")
+            found.append({
+                "key": key, "page": number, "kind": kind.lstrip("/"),
+                "author": " ".join(str(annot.get("/T") or "").split()),
+                "text": "\n".join(str(annot.get("/Contents") or "").splitlines()).strip(),
+                "reply_to": (irt.idnum, irt.generation) if hasattr(irt, "idnum") else "",
+                "date": str(annot.get("/M") or ""),
+            })
+    for item in found:
+        item["reply_to"] = keys.get(item["reply_to"], "") if item["reply_to"] else ""
+    return [item for item in found if item["text"]]
+
+
 # ---------------------------------------------------------------------------
 # Cover page for formats that cannot carry one (PDF, .odt, .md...)
 # ---------------------------------------------------------------------------

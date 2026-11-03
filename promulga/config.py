@@ -35,7 +35,7 @@ def _list(value: str | None) -> list[str]:
 
 
 SECRET_NAMES = ["SECRET_KEY", "ADMIN_PASSWORD", "SMTP_PASSWORD", "OIDC_CLIENT_SECRET", "GITHUB_TOKEN",
-                "ONLYOFFICE_JWT_SECRET", "SIGNING_CERT_PASSWORD"]
+                "ONLYOFFICE_JWT_SECRET", "SIGNING_CERT_PASSWORD", "OPENMETADATA_TOKEN"]
 
 
 def _read_secret(name: str, warnings: list[str], used_env: list[str]) -> str:
@@ -102,6 +102,9 @@ class Config:
     github_branch: str = "main"
     github_folder: str = "policies"
     github_token: str = ""
+    # Data catalogue (OpenMetadata): links of documents to glossary terms and data products (PROM-48)
+    openmetadata_url: str = ""    # e.g. https://openmetadata.example.org (web interface and /api/v1)
+    openmetadata_token: str = ""  # bot token: checks the names and writes the glossary term references
     # OnlyOffice online editor
     onlyoffice_url: str = ""          # as seen by the browser, e.g. /onlyoffice
     onlyoffice_internal_url: str = ""  # as seen by the app container, e.g. http://onlyoffice
@@ -132,6 +135,10 @@ class Config:
     @property
     def github_enabled(self) -> bool:
         return bool(self.github_repo and self.github_token)
+
+    @property
+    def openmetadata_enabled(self) -> bool:
+        return bool(self.openmetadata_url and self.openmetadata_token)
 
     @property
     def onlyoffice_enabled(self) -> bool:
@@ -200,6 +207,8 @@ def load_config() -> Config:
         github_branch=env("GITHUB_BRANCH") or "main",
         github_folder=(env("GITHUB_FOLDER") or "policies").strip("/"),
         github_token=s["GITHUB_TOKEN"],
+        openmetadata_url=(env("OPENMETADATA_URL") or "").rstrip("/"),
+        openmetadata_token=s["OPENMETADATA_TOKEN"],
         onlyoffice_url=(env("ONLYOFFICE_URL") or "").rstrip("/"),
         onlyoffice_internal_url=(env("ONLYOFFICE_INTERNAL_URL") or "").rstrip("/"),
         onlyoffice_jwt_secret=s["ONLYOFFICE_JWT_SECRET"],

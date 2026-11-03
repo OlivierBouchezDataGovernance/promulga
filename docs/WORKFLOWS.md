@@ -54,3 +54,20 @@ The document page says it in plain words:
 - **Internal**: anyone signed in to the portal.
 - **Restricted** (Limited distribution, Confidential): the owner, reviewers, approvers, named readers (people or
   groups) and Document Managers; for Audit - Confidential, the audience only.
+
+## Remarks from an annotated PDF
+
+During the review (Full workflow), reviewers read the PDF review copy. Instead of typing their remarks, they may
+annotate that PDF in Acrobat Reader, Edge or Preview (sticky notes, highlights or underlines with a comment) and
+upload it under *Comments > Import the annotations of a PDF*. Each annotation with a text becomes a remark for the
+owner, with its author and page, and the annotated copy is attached to it; a reply written in the PDF stays a reply.
+When the author name in the PDF is not a participant (often the computer's user name), the remark is the uploader's
+and the name is shown next to the page. Importing the same file again only adds the new annotations.
+
+## Periodic review
+
+A published document is reviewed every N months (the document's period, else the site's). Before the date, its owner
+receives reminders. If the document is still valid, the owner or a Document Manager presses **Confirm** in the
+*Periodic review* box of the document page: no new version is made, the name and date are recorded (history and
+API), the next review date is set and the reminders start again for the next period. If it must change, a Document
+Manager starts a new revision instead.

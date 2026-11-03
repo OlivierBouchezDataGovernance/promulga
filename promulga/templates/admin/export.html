@@ -12,12 +12,16 @@
       Public site: the documents with Website publication <strong>Public</strong> (external or commercial publications)</label>
     <label class="check"><input type="radio" name="scope" value="all" {{ 'checked' if site.export_scope == 'all' }}>
       Intranet site: the documents with Website publication <strong>Internal</strong> or <strong>Public</strong></label>
+    <label class="check"><input type="checkbox" name="list_others" value="1" {{ 'checked' if site.export_list_others }}>
+      Also list every other published document (title, description, metadata), without its PDF nor its text.
+      <span class="hint">Even limited and confidential ones: their title becomes visible on the site. Audit documents never.</span></label>
     <div class="actions"><button class="btn btn-sm btn-outline" type="submit">Save</button></div>
   </form>
 </div></div>
 <section class="section"><div class="container grid-2">
   <div class="card">
     <h2>{{ docs | length }} document(s) in the package</h2>
+    {% if listed %}<p class="small muted">And {{ listed | length }} listed without file: {{ listed | map(attribute='ref') | join(', ') }}.</p>{% endif %}
     {% for d in docs %}<p class="small type-cell">{{ type_icon(site, d.doc_type, 16) }} <a href="/admin/documents/{{ d.id }}">{{ d.ref }}</a> {{ d.title }} - v{{ d.current_version }} ({{ d.publications | length }} version(s))</p>
     {% else %}<p class="empty">No published document has Website publication {% if site.export_scope == 'all' %}Internal or Public{% else %}Public{% endif %}. Set it in the details of the documents (Edit).</p>{% endfor %}
     <div class="actions"><a class="btn btn-outline" href="/admin/export/package.zip">Download the package (.zip)</a></div>

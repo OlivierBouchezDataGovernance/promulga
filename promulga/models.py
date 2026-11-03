@@ -21,6 +21,10 @@ Vocabulary
   annex: never reviewed nor approved, the English version prevails.
 - *ExternalReference*: a legal text, regulation or norm, stored once and linked to
   the documents that rely on it. Also an annex: nothing to approve.
+- *Domain*: the data domain a document belongs to (one per document, e.g. the fully
+  qualified name of an OpenMetadata domain); read by other tools through the API.
+- *CatalogLink*: a link from a document to an entity of the data catalogue
+  (OpenMetadata glossary term or data product).
 """
 
 from __future__ import annotations
@@ -261,6 +265,7 @@ class Document(Base):
     website: Mapped[str] = mapped_column(String(10), default="no")         # key of DISTRIBUTIONS
     chatbot_feed: Mapped[str] = mapped_column(String(10), default="no")    # effective chatbot level (see feed_level)
     keywords: Mapped[str] = mapped_column(String(500), default="")         # free keywords, comma-separated
+    domain: Mapped[str] = mapped_column(String(200), default="")           # data domain (e.g. OpenMetadata FQN)
     readers: Mapped[str] = mapped_column(Text, default="")                 # mandatory readers' e-mails; '' = everybody
     checked_out_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     checked_out_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -271,6 +276,10 @@ class Document(Base):
     approval_revision_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     approval_pdf_path: Mapped[str] = mapped_column(String(500), default="")
     approval_pdf_sha: Mapped[str] = mapped_column(String(64), default="")
+    # Periodic review confirmed without a new version (PROM-46): who and when, last time.
+    review_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    review_confirmed_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"),
+                                                               nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
@@ -278,6 +287,7 @@ class Document(Base):
     children: Mapped[list[Document]] = relationship(back_populates="parent", order_by="Document.ref")
     owner: Mapped[User] = relationship(foreign_keys=[owner_id])
     checked_out_by: Mapped[User | None] = relationship(foreign_keys=[checked_out_by_id])
+    review_confirmed_by: Mapped[User | None] = relationship(foreign_keys=[review_confirmed_by_id])
     assignments: Mapped[list[Assignment]] = relationship(back_populates="document",
                                                          cascade="all, delete-orphan")
     revisions: Mapped[list[Revision]] = relationship(back_populates="document", cascade="all, delete-orphan",
@@ -293,6 +303,8 @@ class Document(Base):
     references: Mapped[list[ExternalReference]] = relationship(secondary=document_references,
                                                                back_populates="documents",
                                                                order_by="ExternalReference.title")
+    catalog_links: Mapped[list[CatalogLink]] = relationship(back_populates="document", cascade="all, delete-orphan",
+                                                            order_by="CatalogLink.kind, CatalogLink.fqn")
 
     def people(self, role: str) -> list[Assignment]:
         return [a for a in self.assignments if a.role == role]
@@ -449,7 +461,8 @@ class Comment(Base):
 
     Remarks come from Promulga itself (source 'promulga') or are imported from the
     Word file when the review ends (source 'word': comments written in Word or in
-    the online editor; the author is then a name, not an account). During Revision
+    the online editor; the author is then a name, not an account), or from a PDF a
+    reviewer annotated (source 'pdf': sticky notes, highlights...). During Revision
     the owner records a decision on every remark of the other participants."""
 
     __tablename__ = "comments"
@@ -460,7 +473,7 @@ class Comment(Base):
     parent_id: Mapped[int | None] = mapped_column(ForeignKey("comments.id", ondelete="CASCADE"), nullable=True)
     author_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     author_label: Mapped[str] = mapped_column(String(200), default="")     # name, for imported remarks
-    source: Mapped[str] = mapped_column(String(20), default="promulga")    # promulga | word
+    source: Mapped[str] = mapped_column(String(20), default="promulga")    # promulga | word | pdf
     location: Mapped[str] = mapped_column(String(300), default="")         # e.g. the commented text in Word
     external_id: Mapped[str] = mapped_column(String(100), default="")      # id in the source, to import once
     body: Mapped[str] = mapped_column(Text)
@@ -563,6 +576,36 @@ class ExternalReference(Base):
     @property
     def label(self) -> str:
         return " - ".join(p for p in [self.issuer, self.title, self.edition] if p)
+
+
+# Entities of the data catalogue a document can be linked to (PROM-48), with their path in OpenMetadata's
+# REST API and web interface. The domain is an attribute of the document (Document.domain), not a link.
+CATALOG_KINDS = {
+    "glossary_term": {"label": "Glossary term", "api": "glossaryTerms", "page": "glossary"},
+    "data_product": {"label": "Data product", "api": "dataProducts", "page": "dataProduct"},
+}
+
+
+class CatalogLink(Base):
+    """A document linked to an OpenMetadata glossary term or data product, by fully qualified name."""
+
+    __tablename__ = "catalog_links"
+    __table_args__ = (UniqueConstraint("document_id", "kind", "fqn"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    document_id: Mapped[int] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(20))                 # key of CATALOG_KINDS
+    fqn: Mapped[str] = mapped_column(String(500))                 # fully qualified name, e.g. Business.Customer
+    label: Mapped[str] = mapped_column(String(300), default="")   # display name, read from OpenMetadata if possible
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    synced_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)   # link written in OpenMetadata
+
+    document: Mapped[Document] = relationship(back_populates="catalog_links")
+
+    @property
+    def kind_label(self) -> str:
+        return CATALOG_KINDS.get(self.kind, {}).get("label", self.kind)
 
 
 class Event(Base):

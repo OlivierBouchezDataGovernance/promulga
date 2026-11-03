@@ -21,6 +21,7 @@
     {% else %}Preparing version <strong>{{ doc.next_version }}</strong>{% if doc.current_version %} (in force: {{ doc.current_version }}){% endif %}. Stage due: {{ due(doc) }}.
       {% if pending %}Waiting for: <strong>{{ pending | map(attribute='display') | join(', ') }}</strong>.{% endif %}{% endif %}
     {% if doc.next_review %} Periodic review due <span class="{{ 'late' if doc.review_overdue }}">{{ doc.next_review | fdate }}</span>.{% endif %}
+    {% if doc.review_confirmed_at %} Last review confirmed {{ doc.review_confirmed_at | fdate }} by {{ doc.review_confirmed_by.display if doc.review_confirmed_by else 'a former user' }}.{% endif %}
     {% if doc.change_note and doc.status not in ['Published', 'Retired'] %}<br>Change note: <em>{{ doc.change_note }}</em>{% endif %}
   </p>
 </div></div>
@@ -107,6 +108,18 @@
       </form></details>
     {% endif %}
 
+    {% if 'confirm_review' in actions %}
+      {% set review_soon = doc.review_overdue or (doc.next_review - today).days <= (site.review_reminder_days or 0) %}
+      <details {{ 'open' if review_soon }}><summary>Periodic review{% if review_soon %}: due {{ doc.next_review | fdate }}{% endif %}</summary>
+      <form method="post" action="/admin/documents/{{ doc.id }}/action/confirm_review" onsubmit="return confirm('Confirm that version {{ doc.current_version }} of {{ doc.ref }} is still valid?')">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <p>Read version {{ doc.current_version }} again. If it is still valid, confirm it: no new version, your name and the date are recorded and the next review is set{% set m = doc.review_months if doc.review_months is not none else site.review_months %}{% if m %} in {{ m }} month(s){% endif %}.
+          {% if 'new_revision' not in actions %}If it must change, ask a Document Manager to start a new revision.{% endif %}</p>
+        <input type="text" name="note" placeholder="Note (optional), e.g. checked against the new regulation" maxlength="2000">
+        <div class="actions"><button class="btn btn-green" type="submit">{{ _("Confirm") }}</button></div>
+      </form></details>
+    {% endif %}
+
     {% if 'new_revision' in actions %}
       <form method="post" action="/admin/documents/{{ doc.id }}/action/new_revision">
         <input type="hidden" name="csrf" value="{{ csrf }}">
@@ -165,7 +178,7 @@
     {% for c in comments %}
       <div class="comment {{ 'resolved' if c.resolved }}" id="c{{ c.id }}">
         <div class="meta"><strong>{{ c.author_name }}</strong> - {{ c.created_at | fdate }} UTC - {{ c.stage }}, version {{ c.version }}{% if c.revision %}, on r{{ c.revision.number }}{% endif %}
-          {% if c.source == 'word' %} - <span class="tag">from the Word file</span>{% endif %}
+          {% if c.source == 'word' %} - <span class="tag">from the Word file</span>{% elif c.source == 'pdf' %} - <span class="tag">from an annotated PDF</span>{% endif %}
           {% if c.decision == 'accepted' %} - <span class="done">accepted</span>{% elif c.decision == 'rejected' %} - <span class="late">rejected</span>{% elif c.resolved %} - <span class="done">resolved</span>{% endif %}</div>
         {% if c.location %}<div class="small muted">On: &laquo; {{ c.location }} &raquo;</div>{% endif %}
         <div class="body">{{ c.body }}</div>
@@ -207,6 +220,14 @@
       <input id="cfile" type="file" name="file">
       <div class="actions"><button class="btn btn-outline" type="submit">{{ _("Add comment") }}</button></div>
     </form>
+    <details><summary class="small">Import the annotations of a PDF</summary>
+    <form method="post" action="/admin/documents/{{ doc.id }}/annotations" enctype="multipart/form-data">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <p class="small muted">Annotate the PDF review copy in Acrobat Reader, Edge or Preview (sticky notes, highlights with a comment), save it and upload it here:
+        each annotation becomes a remark for the owner, with its author and page. Importing the same file again adds only the new annotations.</p>
+      <input type="file" name="file" accept=".pdf" required>
+      <div class="actions"><button class="btn btn-sm btn-outline" type="submit">Import the annotations</button></div>
+    </form></details>
     {% endif %}
   </div>
 
@@ -244,6 +265,27 @@
     <p class="small"><strong>Parent:</strong> {% if doc.parent %}<a href="/admin/documents/{{ doc.parent.id }}">{{ doc.parent.ref }} {{ doc.parent.title }}</a>{% else %}<span class="muted">none</span>{% endif %}</p>
     {% if children %}<p class="small"><strong>Children:</strong>{% for c in children %}<br><a href="/admin/documents/{{ c.id }}">{{ c.ref }} {{ c.title }}</a> <span class="muted">{{ c.status }}</span>{% endfor %}</p>{% endif %}
     <p class="small"><a href="/admin/documents/tree">See the whole tree</a>{% if user.has_role('manager') %} · <a href="/admin/documents/new?parent={{ doc.id }}">New document under this one</a>{% endif %}</p>
+  </div>
+  <div class="card" id="catalog">
+    <h3>Data catalogue</h3>
+    <p class="small"><strong>Domain:</strong> {% if doc.domain %}{% if om_url('domain', doc.domain) %}<a href="{{ om_url('domain', doc.domain) }}" target="_blank" rel="noopener">{{ doc.domain }}</a>{% else %}{{ doc.domain }}{% endif %}{% else %}<span class="muted">none</span>{% if 'edit' in actions %} (<a href="/admin/documents/{{ doc.id }}/edit">set it</a>){% endif %}{% endif %}</p>
+    {% for l in doc.catalog_links %}
+      <p class="small">{{ l.kind_label }}: {% if om_url(l.kind, l.fqn) %}<a href="{{ om_url(l.kind, l.fqn) }}" target="_blank" rel="noopener">{{ l.label or l.fqn }}</a>{% else %}{{ l.label or l.fqn }}{% endif %}
+        {% if l.label and l.label != l.fqn %}<br><span class="muted">{{ l.fqn }}</span>{% endif %}
+        {% if l.synced_at %} <span class="tag" title="The document is in the references of this term in OpenMetadata">in OpenMetadata</span>{% endif %}
+        {% if 'annex' in actions %}<form class="inline-form" method="post" action="/admin/documents/{{ doc.id }}/catalog/{{ l.id }}/delete"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-sm btn-outline" type="submit">Unlink</button></form>{% endif %}</p>
+    {% else %}<p class="empty small">No glossary term or data product.</p>{% endfor %}
+    {% if 'annex' in actions %}
+      <form method="post" action="/admin/documents/{{ doc.id }}/catalog"><input type="hidden" name="csrf" value="{{ csrf }}">
+        <div class="row"><select name="kind">{% for k, v in catalog_kinds.items() %}<option value="{{ k }}">{{ v.label }}</option>{% endfor %}</select>
+          <input type="text" name="fqn" placeholder="Fully qualified name, e.g. Business Glossary.Customer" required maxlength="500"></div>
+        <button class="btn btn-sm btn-outline" type="submit">Link</button></form>
+      <p class="hint">{% if om_enabled %}Checked in OpenMetadata; {% if om_writable %}the glossary terms list this document in their references.{% else %}a limited, confidential or unpublished document is not named in OpenMetadata.{% endif %}
+        {% else %}OpenMetadata is not connected (OPENMETADATA_URL and a token): the names are kept as typed.{% endif %}</p>
+      {% if om_enabled and om_writable and doc.catalog_links and user.has_role('manager') %}
+      <form class="inline-form" method="post" action="/admin/documents/{{ doc.id }}/catalog/sync"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-sm btn-outline" type="submit">Write the links to OpenMetadata again</button></form>
+      {% endif %}
+    {% endif %}
   </div>
   <div class="card" id="annexes">
     <h3>Annexes</h3>

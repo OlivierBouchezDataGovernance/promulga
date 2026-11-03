@@ -20,13 +20,13 @@ from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingRes
 from sqlalchemy import or_
 from sqlalchemy.orm import Session, selectinload
 
-from .. import (accounts, docx_meta, export, icons, insights, mailer, naming, onlyoffice, pdf, reminders,
+from .. import (accounts, catalog, docx_meta, export, icons, insights, mailer, naming, onlyoffice, pdf, reminders,
                site_settings, storage, workflow)
 from ..config import get_config
 from ..db import get_db
 from ..models import (
-    ACTIVE_STATUSES, APPROVAL, GROUP_LOCAL, GROUP_SSO, REVIEW, ROLES, STATUSES, TRANSLATION_LANGUAGES, ApiToken,
-    Assignment, Comment, Document, Event, ExternalReference, Group, OutboxMail, PasskeyCredential, Publication,
+    ACTIVE_STATUSES, APPROVAL, CATALOG_KINDS, GROUP_LOCAL, GROUP_SSO, REVIEW, ROLES, STATUSES, TRANSLATION_LANGUAGES,
+    ApiToken, Assignment, CatalogLink, Comment, Document, Event, ExternalReference, Group, OutboxMail, PasskeyCredential, Publication,
     Revision, Taxonomy, Term, Translation, User, WebhookDelivery,
 )
 from ..security import check_password_strength, hash_password, verify_password
@@ -89,7 +89,8 @@ def _owner(choice: str, other: str) -> str:
 def _form_users(db: Session) -> dict:
     active = db.query(User).filter(User.active.is_(True)).order_by(User.name, User.email).all()
     groups = [g for g in db.query(Group).order_by(Group.name).all() if g.active_members]
-    return {"users": [u for u in active if u.role != "viewer"], "all_users": active, "groups": groups}
+    return {"users": [u for u in active if u.role != "viewer"], "all_users": active, "groups": groups,
+            "domains": workflow.domains(db)}
 
 
 PENDING = "pending"   # files received with a creation form that was refused, kept for the next attempt
@@ -237,7 +238,7 @@ async def new_document(request: Request, title: str = Form(""), doc_type: str = 
                        terms: list[str] = Form([]), file: UploadFile | None = File(None),
                        review_months: str = Form(""), ack_required: str = Form(""),
                        classification: str = Form("internal"), keywords: str = Form(""),
-                       chatbot: str = Form("no"), website: str = Form("no"),
+                       chatbot: str = Form("no"), website: str = Form("no"), domain: str = Form(""),
                        readers: str = Form(""), parent_id: str = Form(""), owner_other: str = Form(""),
                        reviewers_pick: list[str] = Form([]), approvers_pick: list[str] = Form([]),
                        readers_pick: list[str] = Form([]), pending_file: str = Form(""),
@@ -252,7 +253,7 @@ async def new_document(request: Request, title: str = Form(""), doc_type: str = 
             term_ids=_int_list(terms) + await _typed_tags(request, db, user), file=upload, review_months=_months(review_months),
             ack_required=ack_required == "1", classification=classification, keywords=keywords,
             readers=_people(readers, readers_pick), parent_id=_parent_id(parent_id),
-            chatbot=chatbot, website=website)
+            chatbot=chatbot, website=website, domain=domain)
         db.commit()
     except (workflow.WorkflowError, accounts.AccountError, ValueError) as exc:
         db.rollback()
@@ -268,7 +269,7 @@ async def new_document(request: Request, title: str = Form(""), doc_type: str = 
                             "reviewers": ", ".join(_people(reviewers, reviewers_pick)),
                             "approvers": ", ".join(_people(approvers, approvers_pick)),
                             "classification": classification, "keywords": keywords,
-                            "chatbot": chatbot, "website": website,
+                            "chatbot": chatbot, "website": website, "domain": domain,
                             "readers": ", ".join(_people(readers, readers_pick)), "parent_id": parent_id},
                       messages=request.session.pop("flash", []), **_form_users(db), **_parent_options(db))
     _drop_pending(pending_file)
@@ -349,7 +350,7 @@ def edit_document_form(doc_id: int, request: Request, db: Session = Depends(get_
             "approvers": ", ".join(workflow.participant_tokens(doc, "approver")),
             "review_months": "" if doc.review_months is None else doc.review_months, "ack_required": doc.ack_required,
             "classification": doc.classification, "keywords": doc.keywords, "readers": doc.readers,
-            "chatbot": doc.chatbot, "website": doc.website,
+            "chatbot": doc.chatbot, "website": doc.website, "domain": doc.domain,
             "parent_id": str(doc.parent_id or "")}
     return render(request, db, "admin/document_form.html", user=user, doc=doc, taxonomies=_taxonomies(db),
                   selected_terms={t.id for t in doc.terms}, form=form, default_approvers=[],
@@ -361,7 +362,7 @@ async def edit_document(doc_id: int, request: Request, title: str = Form(""), su
                   owner: str = Form(""), reviewers: str = Form(""), approvers: str = Form(""),
                   terms: list[str] = Form([]), review_months: str = Form(""), ack_required: str = Form(""),
                   classification: str = Form("internal"), keywords: str = Form(""), readers: str = Form(""),
-                  chatbot: str = Form("no"), website: str = Form("no"),
+                  chatbot: str = Form("no"), website: str = Form("no"), domain: str = Form(""),
                   parent_id: str = Form(""), owner_other: str = Form(""),
                   reviewers_pick: list[str] = Form([]), approvers_pick: list[str] = Form([]),
                   readers_pick: list[str] = Form([]),
@@ -373,7 +374,7 @@ async def edit_document(doc_id: int, request: Request, title: str = Form(""), su
             db, user, doc, title=title, summary=summary, term_ids=_int_list(terms) + await _typed_tags(request, db, user),
             review_months=_months(review_months), ack_required=ack_required == "1",
             classification=classification, keywords=keywords, readers=_people(readers, readers_pick),
-            parent_id=_parent_id(parent_id), chatbot=chatbot, website=website)
+            parent_id=_parent_id(parent_id), chatbot=chatbot, website=website, domain=domain)
         new_people = (owner.strip().lower(), _people(reviewers, reviewers_pick), _people(approvers, approvers_pick))
         old_people = (doc.owner.email, workflow.participant_tokens(doc, "reviewer"),
                       workflow.participant_tokens(doc, "approver"))
@@ -421,7 +422,9 @@ def document_page(doc_id: int, request: Request, db: Session = Depends(get_db),
                   pending=workflow.pending_users(doc), sod=workflow.segregation_warnings(doc),
                   children=[c for c in doc.children if workflow.can_see(c, user)],
                   capability=docx_meta.capability_warning(latest.filename) if latest else "",
-                  editor=onlyoffice.available(latest), dist=dist,
+                  editor=onlyoffice.available(latest), dist=dist, catalog_kinds=CATALOG_KINDS,
+                  om_url=catalog.entity_url, om_enabled=get_config().openmetadata_enabled,
+                  om_writable=catalog.writable(doc), today=date.today(),
                   comments=top, replies=replies, open_comments=sum(1 for c in top if not c.resolved))
 
 
@@ -585,6 +588,24 @@ async def comment(doc_id: int, request: Request, body: str = Form(""), parent_id
     return response
 
 
+@router.post("/documents/{doc_id}/annotations", dependencies=[Depends(csrf_protect)])
+async def annotations(doc_id: int, request: Request, file: UploadFile | None = File(None),
+                      db: Session = Depends(get_db), user: User = Depends(require_contributor)):
+    """PROM-44: the remarks written as annotations in a PDF become comments."""
+    doc = _get_doc(db, doc_id, user)
+    try:
+        upload = await _read_upload(file)
+        if upload is None:
+            raise workflow.WorkflowError("Choose the annotated PDF.")
+        n = workflow.import_pdf_annotations(db, user, doc, upload[0], upload[1])
+        db.commit()
+        flash(request, f"{n} remark(s) imported from {upload[0]}.", "success")
+    except workflow.WorkflowError as exc:
+        db.rollback()
+        flash(request, str(exc), "error")
+    return redirect(f"/admin/documents/{doc_id}#comments")
+
+
 @router.post("/documents/{doc_id}/comments/{comment_id}/resolve", dependencies=[Depends(csrf_protect)])
 def resolve(doc_id: int, comment_id: int, request: Request, resolved: str = Form("1"),
             db: Session = Depends(get_db), user: User = Depends(require_contributor)):
@@ -692,6 +713,53 @@ async def add_reference(doc_id: int, request: Request, reference_id: str = Form(
     return response
 
 
+@router.post("/documents/{doc_id}/catalog", dependencies=[Depends(csrf_protect)])
+def catalog_link(doc_id: int, request: Request, kind: str = Form(""), fqn: str = Form(""),
+                 db: Session = Depends(get_db), user: User = Depends(require_contributor)):
+    doc = _get_doc(db, doc_id, user)
+    try:
+        link, warning = workflow.add_catalog_link(db, user, doc, kind, fqn)
+        db.commit()
+        flash(request, f"Linked to {link.label or link.fqn}.", "success")
+        if warning:
+            flash(request, warning, "error")
+    except workflow.WorkflowError as exc:
+        db.rollback()
+        flash(request, str(exc), "error")
+    return redirect(f"/admin/documents/{doc_id}#catalog")
+
+
+@router.post("/documents/{doc_id}/catalog/{link_id}/delete", dependencies=[Depends(csrf_protect)])
+def catalog_unlink(doc_id: int, link_id: int, request: Request, db: Session = Depends(get_db),
+                   user: User = Depends(require_contributor)):
+    doc = _get_doc(db, doc_id, user)
+    link = db.get(CatalogLink, link_id)
+    if link is None or link.document_id != doc.id:
+        raise HTTPException(404)
+    try:
+        warning = workflow.remove_catalog_link(db, user, doc, link)
+        db.commit()
+        flash(request, "Link removed.", "success")
+        if warning:
+            flash(request, warning, "error")
+    except workflow.WorkflowError as exc:
+        db.rollback()
+        flash(request, str(exc), "error")
+    return redirect(f"/admin/documents/{doc_id}#catalog")
+
+
+@router.post("/documents/{doc_id}/catalog/sync", dependencies=[Depends(csrf_protect)])
+def catalog_sync(doc_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(require_manager)):
+    doc = _get_doc(db, doc_id, user)
+    warnings = workflow.sync_catalog(db, doc)
+    db.commit()
+    for w in warnings:
+        flash(request, w, "error")
+    if not warnings:
+        flash(request, "OpenMetadata is up to date.", "success")
+    return redirect(f"/admin/documents/{doc_id}#catalog")
+
+
 @router.post("/documents/{doc_id}/references/{ref_id}/unlink", dependencies=[Depends(csrf_protect)])
 def unlink_reference(doc_id: int, ref_id: int, request: Request, db: Session = Depends(get_db),
                      user: User = Depends(require_contributor)):
@@ -722,6 +790,8 @@ ACTIONS = {
     "new_revision": (lambda db, u, d, note, bump: workflow.start_revision(db, u, d, bump, note),
                      "New revision started; the owner was notified."),
     "retire": (lambda db, u, d, note, bump: workflow.retire(db, u, d, note), "Document withdrawn from the portal."),
+    "confirm_review": (lambda db, u, d, note, bump: workflow.confirm_review(db, u, d, note),
+                       "Periodic review confirmed: the version in force stays, the next review date is set."),
 }
 
 
@@ -1323,17 +1393,18 @@ def security(request: Request, db: Session = Depends(get_db), user: User = Depen
 @router.get("/export")
 def export_page(request: Request, db: Session = Depends(get_db), user: User = Depends(require_admin)):
     return render(request, db, "admin/export.html", user=user, cfg=get_config(),
-                  docs=export.exported_documents(db))
+                  docs=export.exported_documents(db), listed=export.listed_documents(db))
 
 
 @router.post("/export/scope", dependencies=[Depends(csrf_protect)])
-def export_scope(request: Request, scope: str = Form("public"), db: Session = Depends(get_db),
-                 user: User = Depends(require_admin)):
+def export_scope(request: Request, scope: str = Form("public"), list_others: str = Form(""),
+                 db: Session = Depends(get_db), user: User = Depends(require_admin)):
     scope = "all" if scope == "all" else "public"
-    site_settings.set_many(db, {"export_scope": scope})
-    workflow.log_admin(db, user, "Export scope changed", scope)
+    site_settings.set_many(db, {"export_scope": scope, "export_list_others": list_others == "1"})
+    workflow.log_admin(db, user, "Export scope changed",
+                       scope + ("; other published documents listed without file" if list_others == "1" else ""))
     db.commit()
-    flash(request, "Every published document will be exported." if scope == "all"
+    flash(request, "Internal and public documents will be exported." if scope == "all"
           else "Only the public documents will be exported.", "success")
     return redirect("/admin/export")
 
