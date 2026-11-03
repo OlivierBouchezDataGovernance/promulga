@@ -129,6 +129,19 @@
     </form>
   </div>
 
+  <div class="card" id="distribution">
+    <h2>Distribution beyond the classification (demo)</h2>
+    <form method="post" action="/admin/settings/distribution">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label class="check"><input type="checkbox" name="beyond" value="1" {{ 'checked' if site.distribution_beyond_classification }}>
+        Allow Chatbot use and Website publication up to <strong>Public</strong> for <strong>Internal</strong> documents</label>
+      <p class="hint">For a demonstration instance whose internal documents may be shown publicly. Off, Public needs an
+        external or commercial publication. Limited, confidential and audit documents stay at <strong>No</strong> whatever
+        this setting. Changing it is logged and recomputes what the chatbots may use (knowledge feed of the API).</p>
+      <div class="actions"><button class="btn" type="submit">Save distribution setting</button></div>
+    </form>
+  </div>
+
   <div class="card" id="portal">
     <h2>Public portal</h2>
     <form method="post" action="/admin/settings/portal">

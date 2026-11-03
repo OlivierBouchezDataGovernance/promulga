@@ -114,6 +114,12 @@ New in 0.6 (in progress):
 - **Export: list the other documents without their file** (option in Admin >
   Export): a library shows the whole set (title, description, metadata) and
   links only the documents whose Website publication allows it.
+- **Distribution beyond the classification (demo setting).** In Settings, an
+  administrator may allow Chatbot use and Website publication up to *Public*
+  for *Internal* documents (off by default): the knowledge feed and the public
+  export then follow the chosen value. Limited, confidential and audit documents
+  stay at *No*. Changing the setting is logged and recomputes the chatbot feed;
+  the document page marks the values beyond the classification.
 
 New in 0.4.3:
 

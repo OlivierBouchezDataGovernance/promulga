@@ -29,7 +29,8 @@ from .. import catalog, naming, site_settings
 from ..config import get_config
 from ..db import get_db
 from ..models import (
-    DISTRIBUTION_ORDER, ApiToken, CatalogLink, ChannelLog, Document, Taxonomy, max_distribution, utcnow,
+    DISTRIBUTION_ORDER, ApiToken, CatalogLink, ChannelLog, Document, Taxonomy, distribution_beyond, max_distribution,
+    utcnow,
 )
 
 router = APIRouter(prefix="/api/v1")
@@ -196,7 +197,7 @@ def corpus(audience: str = "", since: str = "", db: Session = Depends(get_db),
             if key in once and log.at >= after and (doc is None or _rank(doc.feed_level) < _rank(audience)):
                 reason = ("deleted" if doc is None else "retired" if doc.status == "Retired"
                           else "audit" if doc.is_strict else "classification"
-                          if _rank(max_distribution(doc.classification)) < _rank(audience) else "chatbot use")
+                          if _rank(max_distribution(doc.classification, distribution_beyond(db))) < _rank(audience) else "chatbot use")
                 withdrawals.append({"ref": doc.ref if doc else log.ref, "withdrawn": log.at.isoformat() + "Z",
                                     "reason": reason})
         result["withdrawals"] = sorted(withdrawals, key=lambda w: w["ref"])
